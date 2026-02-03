@@ -14,10 +14,16 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ success: false, message: 'All fields are required' });
     }
 
-    // Check if user exists
-    const existingUser = await User.findOne({ $or: [{ email }, { studentId }] });
-    if (existingUser) {
-      return res.status(400).json({ success: false, message: 'User already exists' });
+    // Check if email already exists
+    const existingEmail = await User.findOne({ email });
+    if (existingEmail) {
+      return res.status(400).json({ success: false, message: 'An account with this email already exists' });
+    }
+
+    // Check if student ID already exists
+    const existingStudentId = await User.findOne({ studentId });
+    if (existingStudentId) {
+      return res.status(400).json({ success: false, message: 'An account with this Student ID already exists' });
     }
 
     // Create user (password hashing is handled by the User model pre-save hook)

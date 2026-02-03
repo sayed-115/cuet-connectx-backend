@@ -2,6 +2,41 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const { auth, optionalAuth } = require('../middleware/auth');
+const multer = require('multer');
+const sharp = require('sharp');
+const path = require('path');
+
+// Configure multer for file uploads
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
+
+// Helper function to process and save images
+const processImage = async (buffer, filename) => {
+  const outputPath = path.join(__dirname, '../uploads', filename);
+  await sharp(buffer)
+    .resize(500, 500, { fit: 'cover' })
+    .jpeg({ quality: 80 })
+    .toFile(outputPath);
+  return `/uploads/${filename}`;
+};
+
+// Get current user profile (authenticated)
+router.get('/profile', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id)
+      .select('-password')
+      .populate('following', 'fullName studentId profileImage departmentShort batch')
+      .populate('followers', 'fullName studentId profileImage departmentShort batch');
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    res.json({ success: true, user });
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
 
 // Get all users (public profiles)
 router.get('/', async (req, res) => {
@@ -56,19 +91,17 @@ router.get('/:id', async (req, res) => {
 });
 
 // Update user profile (authenticated, self-only)
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', auth, upload.fields([{ name: 'profileImage' }, { name: 'coverImage' }]), async (req, res) => {
   try {
-    // Verify user can only update their own profile
     if (req.userId !== req.params.id && req.user._id.toString() !== req.params.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to update this profile' });
     }
 
-    // Whitelist allowed fields - EXCLUDE batch, department, studentId (derived from studentId on backend)
     const allowedFields = [
       'fullName', 'about', 'address', 'currentProfession', 'previousProfession',
-      'profileImage', 'coverImage', 'socialLinks', 'skills', 'researchInterests', 'education'
+      'socialLinks', 'skills', 'researchInterests', 'education'
     ];
-    
+
     const updates = {};
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) {
@@ -76,23 +109,24 @@ router.put('/:id', auth, async (req, res) => {
       }
     }
 
-    // Sanitize string fields
-    if (updates.fullName) updates.fullName = updates.fullName.trim().slice(0, 100);
-    if (updates.about) updates.about = updates.about.trim().slice(0, 500);
-    if (updates.address) updates.address = updates.address.trim().slice(0, 200);
-    if (updates.currentProfession) updates.currentProfession = updates.currentProfession.trim().slice(0, 100);
+    // Process uploaded images
+    if (req.files.profileImage) {
+      const profileImagePath = await processImage(req.files.profileImage[0].buffer, `profile-${req.params.id}.jpeg`);
+      updates.profileImage = profileImagePath;
+    }
 
-    const user = await User.findByIdAndUpdate(
-      req.params.id,
-      { $set: updates },
-      { new: true, runValidators: true }
-    ).select('-password');
+    if (req.files.coverImage) {
+      const coverImagePath = await processImage(req.files.coverImage[0].buffer, `cover-${req.params.id}.jpeg`);
+      updates.coverImage = coverImagePath;
+    }
+
+    const user = await User.findByIdAndUpdate(req.params.id, updates, { new: true });
 
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    res.json({ success: true, user, message: 'Profile updated successfully' });
+    res.json({ success: true, user });
   } catch (error) {
     console.error('Update user error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -130,7 +164,16 @@ router.post('/:id/follow', auth, async (req, res) => {
       $addToSet: { followers: currentUserId }
     });
 
-    res.json({ success: true, message: 'Successfully followed user' });
+    // Fetch updated data
+    const updatedUser = await User.findById(currentUserId).populate('following', 'fullName studentId profileImage departmentShort batch');
+    const updatedTargetUser = await User.findById(targetUserId).populate('followers', 'fullName studentId profileImage departmentShort batch');
+
+    res.json({ 
+      success: true, 
+      message: 'Successfully followed user', 
+      user: updatedUser, 
+      targetUser: updatedTargetUser 
+    });
   } catch (error) {
     console.error('Follow error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -153,7 +196,16 @@ router.delete('/:id/follow', auth, async (req, res) => {
       $pull: { followers: currentUserId }
     });
 
-    res.json({ success: true, message: 'Successfully unfollowed user' });
+    // Fetch updated data
+    const updatedUser = await User.findById(currentUserId).populate('following', 'fullName studentId profileImage departmentShort batch');
+    const updatedTargetUser = await User.findById(targetUserId).populate('followers', 'fullName studentId profileImage departmentShort batch');
+
+    res.json({ 
+      success: true, 
+      message: 'Successfully unfollowed user', 
+      user: updatedUser, 
+      targetUser: updatedTargetUser 
+    });
   } catch (error) {
     console.error('Unfollow error:', error);
     res.status(500).json({ success: false, message: 'Server error' });

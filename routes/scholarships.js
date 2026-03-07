@@ -25,9 +25,10 @@ router.get('/', async (req, res) => {
     const query = {};
     
     if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { organization: { $regex: search, $options: 'i' } }
+        { title: { $regex: escaped, $options: 'i' } },
+        { organization: { $regex: escaped, $options: 'i' } }
       ];
     }
 

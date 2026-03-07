@@ -20,7 +20,7 @@ const auth = async (req, res, next) => {
         return res.status(401).json({ success: false, message: 'User not found' });
       }
 
-      if (!user.isActive) {
+      if (!user.isActive || user.status === 'banned') {
         return res.status(403).json({ success: false, message: 'Account is deactivated' });
       }
 
@@ -49,7 +49,7 @@ const optionalAuth = async (req, res, next) => {
       try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const user = await User.findById(decoded.userId).select('-password');
-        if (user && user.isActive) {
+        if (user && user.isActive && user.status !== 'banned') {
           req.user = user;
           req.userId = decoded.userId;
         }
@@ -63,4 +63,6 @@ const optionalAuth = async (req, res, next) => {
   }
 };
 
-module.exports = { auth, optionalAuth };
+const protect = auth;
+
+module.exports = { auth, protect, optionalAuth };

@@ -10,11 +10,13 @@ router.get('/', async (req, res) => {
     const query = {};
     
     if (type) query.type = type;
-    if (location) query.location = { $regex: location, $options: 'i' };
+    const escapeRx = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (location) query.location = { $regex: escapeRx(location), $options: 'i' };
     if (search) {
+      const escaped = escapeRx(search);
       query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { company: { $regex: search, $options: 'i' } }
+        { title: { $regex: escaped, $options: 'i' } },
+        { company: { $regex: escaped, $options: 'i' } }
       ];
     }
 

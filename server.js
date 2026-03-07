@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
@@ -11,11 +12,13 @@ const userRoutes = require('./routes/users');
 const jobRoutes = require('./routes/jobs');
 const scholarshipRoutes = require('./routes/scholarships');
 const postRoutes = require('./routes/posts');
+const adminRoutes = require('./routes/adminRoutes');
 
 const app = express();
 
 // Security middleware
 app.disable('x-powered-by'); // Hide Express
+app.use(helmet());           // Set secure HTTP headers
 
 // Parse CORS origins from env (comma-separated)
 const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map(o => o.trim());
@@ -37,10 +40,20 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
+// Serve uploaded files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ Connected to MongoDB'))
-  .catch((err) => console.error('❌ MongoDB connection error:', err));
+  .catch((err) => {
+    console.error('❌ MongoDB connection error:', err);
+    process.exit(1);
+  });
+
+mongoose.connection.on('error', (err) => console.error('MongoDB error:', err));
+mongoose.connection.on('disconnected', () => console.warn('⚠️ MongoDB disconnected'));
+mongoose.connection.on('reconnected', () => console.log('✅ MongoDB reconnected'));
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -48,6 +61,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/jobs', jobRoutes);
 app.use('/api/scholarships', scholarshipRoutes);
 app.use('/api/posts', postRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

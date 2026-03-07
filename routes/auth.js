@@ -2,7 +2,19 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
+
+// Rate limiters — prevent brute-force on auth endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,                   // 20 attempts per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many attempts. Please try again later.' },
+});
+
+router.use(authLimiter);
 
 // Register
 router.post('/register', async (req, res) => {
@@ -37,17 +49,31 @@ router.post('/register', async (req, res) => {
     await user.save();
 
     // Generate token
-    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ userId: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
 
     res.status(201).json({
       success: true,
       message: 'Registration successful',
       token,
-      user: { id: user._id, fullName: user.fullName, email: user.email, studentId: user.studentId, batch: user.batch, department: user.department }
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        studentId: user.studentId,
+        batch: user.batch,
+        department: user.department,
+        role: user.role,
+        status: user.status
+      }
     });
   } catch (error) {
     console.error('Registration error:', error.message, error);
-    res.status(500).json({ success: false, message: error.message || 'Server error' });
+    // Only expose Mongoose validation messages, not internal details
+    if (error.name === 'ValidationError') {
+      const msg = Object.values(error.errors).map(e => e.message).join(', ');
+      return res.status(400).json({ success: false, message: msg });
+    }
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
@@ -75,7 +101,7 @@ router.post('/login', async (req, res) => {
     }
 
     // Generate token
-    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ userId: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
 
     res.json({
       success: true,
@@ -90,7 +116,9 @@ router.post('/login', async (req, res) => {
         department: user.department,
         departmentShort: user.departmentShort,
         userType: user.userType,
-        profileImage: user.profileImage
+        profileImage: user.profileImage,
+        role: user.role,
+        status: user.status
       }
     });
   } catch (error) {
@@ -99,24 +127,13 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Get current user
-router.get('/me', async (req, res) => {
+// Get current user — reuses auth middleware so banned/inactive users are rejected
+const { auth } = require('../middleware/auth');
+router.get('/me', auth, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'No token provided' });
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId).select('-password');
-    
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    res.json({ success: true, user });
+    res.json({ success: true, user: req.user });
   } catch (error) {
-    res.status(401).json({ success: false, message: 'Invalid token' });
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 

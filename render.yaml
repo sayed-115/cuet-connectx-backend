@@ -5,7 +5,6 @@ services:
     region: oregon
     plan: free
     branch: main
-    rootDir: cuet-connectx-backend
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /api/health

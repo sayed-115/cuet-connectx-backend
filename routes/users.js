@@ -8,7 +8,15 @@ const path = require('path');
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
+    if (allowed.includes(file.mimetype)) return cb(null, true);
+    cb(new Error('Only JPEG, PNG and WebP images are allowed'));
+  },
+});
 
 // Helper function to process and save images
 const processImage = async (buffer, filename) => {
@@ -47,9 +55,10 @@ router.get('/', async (req, res) => {
     if (batch) query.batch = parseInt(batch);
     if (department) query.departmentShort = department;
     if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       query.$or = [
-        { fullName: { $regex: search, $options: 'i' } },
-        { studentId: { $regex: search, $options: 'i' } }
+        { fullName: { $regex: escaped, $options: 'i' } },
+        { studentId: { $regex: escaped, $options: 'i' } }
       ];
     }
 

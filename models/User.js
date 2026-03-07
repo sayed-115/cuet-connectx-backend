@@ -80,6 +80,16 @@ const userSchema = new mongoose.Schema({
     enum: ['student', 'alumni'],
     default: 'student'
   },
+  role: {
+    type: String,
+    enum: ['student', 'alumni', 'admin'],
+    default: 'student'
+  },
+  status: {
+    type: String,
+    enum: ['active', 'banned'],
+    default: 'active'
+  },
   profileImage: {
     type: String,
     default: null
@@ -156,6 +166,11 @@ userSchema.pre('validate', function() {
     this.departmentShort = DEPARTMENT_SHORT[deptCode] || 'N/A';
     this.roll = roll;
     this.userType = this.batch >= 2020 ? 'student' : 'alumni';
+    // Only auto-assign role during initial registration.
+    // This prevents the hook from overriding admin-set role changes.
+    if (this.isNew && this.role !== 'admin') {
+      this.role = this.userType;
+    }
   }
 });
 

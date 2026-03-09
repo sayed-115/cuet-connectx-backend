@@ -22,15 +22,18 @@ async function getTransporter() {
 
   cachedTransporter = nodemailer.createTransport({
     host: addresses[0],
-    port: 465,
-    secure: true,
+    port: 587,
+    secure: false,
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
     tls: {
-      servername: 'smtp.gmail.com', // needed for TLS certificate verification
+      servername: 'smtp.gmail.com',
     },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
   });
 
   return cachedTransporter;

@@ -287,6 +287,7 @@ router.post('/reset-password', async (req, res) => {
     user.password = newPassword; // Will be hashed by the pre-save hook
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
+    user.passwordChangedAt = new Date();
     await user.save();
 
     res.json({ success: true, message: 'Password reset successfully! You can now log in with your new password.' });

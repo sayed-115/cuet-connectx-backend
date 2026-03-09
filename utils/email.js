@@ -1,16 +1,40 @@
 const nodemailer = require('nodemailer');
 const dns = require('dns');
 
-// Use Google Public DNS so Render's internal resolver doesn't fail on smtp.gmail.com
-dns.setServers(['8.8.8.8', '8.8.4.4']);
+// Resolve smtp.gmail.com via Google Public DNS (c-ares resolver),
+// bypassing Render's broken OS-level DNS that can't resolve it.
+const resolver = new dns.Resolver();
+resolver.setServers(['8.8.8.8', '8.8.4.4']);
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+let cachedTransporter = null;
+
+async function getTransporter() {
+  if (cachedTransporter) return cachedTransporter;
+
+  // dns.Resolver.resolve4 uses c-ares (respects setServers), unlike
+  // dns.lookup which uses the OS resolver (ignores setServers).
+  const addresses = await new Promise((resolve, reject) => {
+    resolver.resolve4('smtp.gmail.com', (err, addrs) => {
+      if (err) reject(err);
+      else resolve(addrs);
+    });
+  });
+
+  cachedTransporter = nodemailer.createTransport({
+    host: addresses[0],
+    port: 465,
+    secure: true,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+    tls: {
+      servername: 'smtp.gmail.com', // needed for TLS certificate verification
+    },
+  });
+
+  return cachedTransporter;
+}
 
 /**
  * Send email verification link to a newly registered user.
@@ -55,6 +79,7 @@ async function sendVerificationEmail(to, token) {
     `,
   };
 
+  const transporter = await getTransporter();
   await transporter.sendMail(mailOptions);
 }
 
@@ -100,6 +125,7 @@ async function sendPasswordResetEmail(to, token) {
     `,
   };
 
+  const transporter = await getTransporter();
   await transporter.sendMail(mailOptions);
 }
 

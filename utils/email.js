@@ -1,43 +1,10 @@
-const nodemailer = require('nodemailer');
-const dns = require('dns');
+const { Resend } = require('resend');
 
-// Resolve smtp.gmail.com via Google Public DNS (c-ares resolver),
-// bypassing Render's broken OS-level DNS that can't resolve it.
-const resolver = new dns.Resolver();
-resolver.setServers(['8.8.8.8', '8.8.4.4']);
+// Resend uses HTTPS API (port 443) — works on Render free tier
+// where outbound SMTP ports (25/465/587) are blocked.
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-let cachedTransporter = null;
-
-async function getTransporter() {
-  if (cachedTransporter) return cachedTransporter;
-
-  // dns.Resolver.resolve4 uses c-ares (respects setServers), unlike
-  // dns.lookup which uses the OS resolver (ignores setServers).
-  const addresses = await new Promise((resolve, reject) => {
-    resolver.resolve4('smtp.gmail.com', (err, addrs) => {
-      if (err) reject(err);
-      else resolve(addrs);
-    });
-  });
-
-  cachedTransporter = nodemailer.createTransport({
-    host: addresses[0],
-    port: 587,
-    secure: false,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-    tls: {
-      servername: 'smtp.gmail.com',
-    },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
-  });
-
-  return cachedTransporter;
-}
+const FROM_EMAIL = process.env.FROM_EMAIL || 'CUET ConnectX <onboarding@resend.dev>';
 
 /**
  * Send email verification link to a newly registered user.
@@ -47,9 +14,9 @@ async function sendVerificationEmail(to, token) {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
   const verifyLink = `${frontendUrl}/verify-email?token=${token}`;
 
-  const mailOptions = {
-    from: `"CUET ConnectX" <${process.env.SMTP_USER}>`,
-    to,
+  const { data, error } = await resend.emails.send({
+    from: FROM_EMAIL,
+    to: [to],
     subject: 'Verify Your Email — CUET ConnectX',
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -80,10 +47,9 @@ async function sendVerificationEmail(to, token) {
         </p>
       </div>
     `,
-  };
+  });
 
-  const transporter = await getTransporter();
-  await transporter.sendMail(mailOptions);
+  if (error) throw new Error(error.message);
 }
 
 /**
@@ -93,9 +59,9 @@ async function sendPasswordResetEmail(to, token) {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
   const resetLink = `${frontendUrl}/reset-password?token=${token}`;
 
-  const mailOptions = {
-    from: `"CUET ConnectX" <${process.env.SMTP_USER}>`,
-    to,
+  const { data, error } = await resend.emails.send({
+    from: FROM_EMAIL,
+    to: [to],
     subject: 'Reset Your Password — CUET ConnectX',
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -126,10 +92,9 @@ async function sendPasswordResetEmail(to, token) {
         </p>
       </div>
     `,
-  };
+  });
 
-  const transporter = await getTransporter();
-  await transporter.sendMail(mailOptions);
+  if (error) throw new Error(error.message);
 }
 
 module.exports = { sendVerificationEmail, sendPasswordResetEmail };

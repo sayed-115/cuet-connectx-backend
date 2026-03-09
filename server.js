@@ -80,60 +80,7 @@ app.use('/api/admin', adminRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', version: 5, message: 'CUET ConnectX API is running!' });
-});
-
-// Diagnostic: test SMTP DNS resolution from Render
-app.get('/api/health/smtp-test', async (req, res) => {
-  const dns = require('dns');
-  const resolver = new dns.Resolver();
-  resolver.setServers(['8.8.8.8', '8.8.4.4']);
-  const results = { osLookup: null, caresResolve: null };
-
-  // Test 1: OS-level dns.lookup (getaddrinfo)
-  try {
-    const addr = await new Promise((resolve, reject) => {
-      dns.lookup('smtp.gmail.com', (err, address) => {
-        if (err) reject(err); else resolve(address);
-      });
-    });
-    results.osLookup = { success: true, address: addr };
-  } catch (e) {
-    results.osLookup = { success: false, error: e.message };
-  }
-
-  // Test 2: c-ares resolver with Google DNS
-  try {
-    const addrs = await new Promise((resolve, reject) => {
-      resolver.resolve4('smtp.gmail.com', (err, addresses) => {
-        if (err) reject(err); else resolve(addresses);
-      });
-    });
-    results.caresResolve = { success: true, addresses: addrs };
-  } catch (e) {
-    results.caresResolve = { success: false, error: e.message };
-  }
-
-  // Test 3: Quick TCP probe to first resolved IP on port 587
-  if (results.caresResolve?.success && results.caresResolve.addresses.length > 0) {
-    const net = require('net');
-    const ip = results.caresResolve.addresses[0];
-    try {
-      await new Promise((resolve, reject) => {
-        const sock = net.connect({ host: ip, port: 587, timeout: 5000 }, () => {
-          sock.destroy();
-          resolve();
-        });
-        sock.on('error', reject);
-        sock.on('timeout', () => { sock.destroy(); reject(new Error('TCP connect timed out')); });
-      });
-      results.tcpProbe = { success: true, host: ip, port: 587 };
-    } catch (e) {
-      results.tcpProbe = { success: false, host: ip, port: 587, error: e.message };
-    }
-  }
-
-  res.json(results);
+  res.json({ status: 'ok', version: 6, message: 'CUET ConnectX API is running!' });
 });
 
 // Error handling middleware

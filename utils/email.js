@@ -1,4 +1,8 @@
 const nodemailer = require('nodemailer');
+const dns = require('dns');
+
+// Use Google Public DNS so Render's internal resolver doesn't fail on smtp.gmail.com
+dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',

@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
-const { sendVerificationEmail } = require('../utils/email');
+const { sendVerificationEmail, sendPasswordResetEmail } = require('../utils/email');
 
 // Rate limiters — prevent brute-force on auth endpoints
 const authLimiter = rateLimit({
@@ -215,6 +215,83 @@ router.post('/resend-verification', async (req, res) => {
     res.json({ success: true, message: 'Verification email sent! Please check your inbox.' });
   } catch (error) {
     console.error('Resend verification error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Forgot password — send reset link
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email, studentId } = req.body;
+
+    if (!email && !studentId) {
+      return res.status(400).json({ success: false, message: 'Email or Student ID is required' });
+    }
+
+    const user = await User.findOne(email ? { email } : { studentId });
+
+    if (!user) {
+      // Don't reveal whether the account exists
+      return res.json({ success: true, message: 'If an account with that information exists, a password reset link has been sent.' });
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+    user.passwordResetToken = hashedToken;
+    user.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    await user.save();
+
+    try {
+      await sendPasswordResetEmail(user.email, resetToken);
+    } catch (emailErr) {
+      console.error('Failed to send password reset email:', emailErr.message);
+      user.passwordResetToken = undefined;
+      user.passwordResetExpires = undefined;
+      await user.save();
+      return res.status(500).json({ success: false, message: 'Failed to send reset email. Please try again later.' });
+    }
+
+    res.json({ success: true, message: 'If an account with that information exists, a password reset link has been sent.' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Reset password — verify token and update password
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Token and new password are required' });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
+    }
+
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+    const user = await User.findOne({
+      passwordResetToken: hashedToken,
+      passwordResetExpires: { $gt: Date.now() },
+    }).select('+passwordResetToken +passwordResetExpires');
+
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired reset link. Please request a new one.' });
+    }
+
+    user.password = newPassword; // Will be hashed by the pre-save hook
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    await user.save();
+
+    res.json({ success: true, message: 'Password reset successfully! You can now log in with your new password.' });
+  } catch (error) {
+    console.error('Reset password error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });

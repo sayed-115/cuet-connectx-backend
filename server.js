@@ -16,6 +16,9 @@ const adminRoutes = require('./routes/adminRoutes');
 
 const app = express();
 
+// Trust first proxy (Render, etc.) so express-rate-limit sees real client IP
+app.set('trust proxy', 1);
+
 // Security middleware
 app.disable('x-powered-by'); // Hide Express
 app.use(helmet());           // Set secure HTTP headers

@@ -42,7 +42,22 @@ app.use(cookieParser());
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ Connected to MongoDB'))
+  .then(async () => {
+    console.log('✅ Connected to MongoDB');
+    // One-time migration: mark pre-existing users (registered before email verification feature) as verified
+    try {
+      const User = require('./models/User');
+      const result = await User.updateMany(
+        { emailVerified: { $ne: true }, emailVerificationToken: { $exists: false } },
+        { $set: { emailVerified: true } }
+      );
+      if (result.modifiedCount > 0) {
+        console.log(`✅ Migration: marked ${result.modifiedCount} existing user(s) as email-verified`);
+      }
+    } catch (migrationErr) {
+      console.error('Migration warning:', migrationErr.message);
+    }
+  })
   .catch((err) => {
     console.error('❌ MongoDB connection error:', err);
     process.exit(1);

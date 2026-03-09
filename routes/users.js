@@ -2,31 +2,8 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const { auth, optionalAuth } = require('../middleware/auth');
-const multer = require('multer');
-const sharp = require('sharp');
-const path = require('path');
-
-// Configure multer for file uploads
-const storage = multer.memoryStorage();
-const upload = multer({
-  storage,
-  limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
-  fileFilter: (req, file, cb) => {
-    const allowed = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
-    if (allowed.includes(file.mimetype)) return cb(null, true);
-    cb(new Error('Only JPEG, PNG and WebP images are allowed'));
-  },
-});
-
-// Helper function to process and save images
-const processImage = async (buffer, filename) => {
-  const outputPath = path.join(__dirname, '../uploads', filename);
-  await sharp(buffer)
-    .resize(500, 500, { fit: 'cover' })
-    .jpeg({ quality: 80 })
-    .toFile(outputPath);
-  return `/uploads/${filename}`;
-};
+const { profileUpload } = require('../middleware/upload');
+const cloudinaryUtils = require('../utils/cloudinary');
 
 // Get current user profile (authenticated)
 router.get('/profile', auth, async (req, res) => {
@@ -99,8 +76,127 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Update user profile (authenticated, self-only)
-router.put('/:id', auth, upload.fields([{ name: 'profileImage' }, { name: 'coverImage' }]), async (req, res) => {
+// Update own profile (authenticated, JSON body)
+router.put('/profile', auth, async (req, res) => {
+  try {
+    const allowedFields = [
+      'about', 'address', 'contactEmail', 'phone',
+      'currentProfession', 'previousProfession',
+      'socialLinks', 'skills', 'researchInterests', 'education'
+    ];
+
+    const updates = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+
+    // Sanitize string fields
+    for (const key of ['about', 'address', 'contactEmail', 'phone', 'currentProfession', 'previousProfession']) {
+      if (typeof updates[key] === 'string') {
+        updates[key] = updates[key].trim().slice(0, 500);
+      }
+    }
+
+    // Validate socialLinks
+    if (updates.socialLinks && typeof updates.socialLinks === 'object') {
+      const allowed = ['linkedin', 'github', 'facebook', 'portfolio'];
+      const sanitized = {};
+      for (const k of allowed) {
+        sanitized[k] = typeof updates.socialLinks[k] === 'string' ? updates.socialLinks[k].trim().slice(0, 300) : '';
+      }
+      updates.socialLinks = sanitized;
+    }
+
+    // Validate skills array
+    if (updates.skills) {
+      if (!Array.isArray(updates.skills)) {
+        return res.status(400).json({ success: false, message: 'Skills must be an array' });
+      }
+      updates.skills = updates.skills.filter(s => typeof s === 'string').map(s => s.trim().slice(0, 50)).slice(0, 30);
+    }
+
+    // Validate researchInterests array
+    if (updates.researchInterests) {
+      if (!Array.isArray(updates.researchInterests)) {
+        return res.status(400).json({ success: false, message: 'Research interests must be an array' });
+      }
+      updates.researchInterests = updates.researchInterests.filter(s => typeof s === 'string').map(s => s.trim().slice(0, 100)).slice(0, 20);
+    }
+
+    // Validate education array
+    if (updates.education) {
+      if (!Array.isArray(updates.education)) {
+        return res.status(400).json({ success: false, message: 'Education must be an array' });
+      }
+      updates.education = updates.education.slice(0, 10).map(edu => ({
+        degree: String(edu.degree || '').trim().slice(0, 200),
+        institution: String(edu.institution || '').trim().slice(0, 200),
+        year: String(edu.year || '').trim().slice(0, 50),
+        major: String(edu.major || '').trim().slice(0, 100),
+        focus: String(edu.focus || '').trim().slice(0, 100),
+        gpa: String(edu.gpa || '').trim().slice(0, 10),
+      }));
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { $set: updates },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.json({ success: true, message: 'Profile updated', user });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Upload profile/cover image (authenticated, self-only) — Cloudinary
+router.put('/profile/image', auth, profileUpload.fields([{ name: 'profileImage', maxCount: 1 }, { name: 'coverImage', maxCount: 1 }]), async (req, res) => {
+  try {
+    const updates = {};
+    const currentUser = await User.findById(req.user._id);
+
+    if (req.files && req.files.profileImage) {
+      // Delete old image from Cloudinary if exists
+      if (currentUser.profileImage) await cloudinaryUtils.deleteImage(currentUser.profileImage);
+      updates.profileImage = req.files.profileImage[0].path; // Cloudinary secure URL
+    }
+
+    if (req.files && req.files.coverImage) {
+      if (currentUser.coverImage) await cloudinaryUtils.deleteImage(currentUser.coverImage);
+      updates.coverImage = req.files.coverImage[0].path; // Cloudinary secure URL
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ success: false, message: 'No image provided' });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { $set: updates },
+      { new: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.json({ success: true, user });
+  } catch (error) {
+    console.error('Upload image error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Update user profile with images (authenticated, self-only) — Cloudinary
+router.put('/:id', auth, profileUpload.fields([{ name: 'profileImage', maxCount: 1 }, { name: 'coverImage', maxCount: 1 }]), async (req, res) => {
   try {
     if (req.userId !== req.params.id && req.user._id.toString() !== req.params.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to update this profile' });
@@ -118,18 +214,20 @@ router.put('/:id', auth, upload.fields([{ name: 'profileImage' }, { name: 'cover
       }
     }
 
-    // Process uploaded images
-    if (req.files.profileImage) {
-      const profileImagePath = await processImage(req.files.profileImage[0].buffer, `profile-${req.params.id}.jpeg`);
-      updates.profileImage = profileImagePath;
+    const currentUser = await User.findById(req.params.id);
+
+    // Use Cloudinary URLs from multer-storage-cloudinary
+    if (req.files && req.files.profileImage) {
+      if (currentUser.profileImage) await cloudinaryUtils.deleteImage(currentUser.profileImage);
+      updates.profileImage = req.files.profileImage[0].path;
     }
 
-    if (req.files.coverImage) {
-      const coverImagePath = await processImage(req.files.coverImage[0].buffer, `cover-${req.params.id}.jpeg`);
-      updates.coverImage = coverImagePath;
+    if (req.files && req.files.coverImage) {
+      if (currentUser.coverImage) await cloudinaryUtils.deleteImage(currentUser.coverImage);
+      updates.coverImage = req.files.coverImage[0].path;
     }
 
-    const user = await User.findByIdAndUpdate(req.params.id, updates, { new: true });
+    const user = await User.findByIdAndUpdate(req.params.id, updates, { new: true }).select('-password');
 
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
@@ -159,7 +257,8 @@ router.post('/:id/follow', auth, async (req, res) => {
     }
 
     // Check if already following (prevent duplicates)
-    if (req.user.following.includes(targetUserId)) {
+    const alreadyFollowing = req.user.following.some(id => id.toString() === targetUserId);
+    if (alreadyFollowing) {
       return res.status(400).json({ success: false, message: 'Already following this user' });
     }
 
@@ -174,8 +273,12 @@ router.post('/:id/follow', auth, async (req, res) => {
     });
 
     // Fetch updated data
-    const updatedUser = await User.findById(currentUserId).populate('following', 'fullName studentId profileImage departmentShort batch');
-    const updatedTargetUser = await User.findById(targetUserId).populate('followers', 'fullName studentId profileImage departmentShort batch');
+    const updatedUser = await User.findById(currentUserId)
+      .select('-password')
+      .populate('following', 'fullName studentId profileImage departmentShort batch');
+    const updatedTargetUser = await User.findById(targetUserId)
+      .select('-password')
+      .populate('followers', 'fullName studentId profileImage departmentShort batch');
 
     res.json({ 
       success: true, 
@@ -206,8 +309,12 @@ router.delete('/:id/follow', auth, async (req, res) => {
     });
 
     // Fetch updated data
-    const updatedUser = await User.findById(currentUserId).populate('following', 'fullName studentId profileImage departmentShort batch');
-    const updatedTargetUser = await User.findById(targetUserId).populate('followers', 'fullName studentId profileImage departmentShort batch');
+    const updatedUser = await User.findById(currentUserId)
+      .select('-password')
+      .populate('following', 'fullName studentId profileImage departmentShort batch');
+    const updatedTargetUser = await User.findById(targetUserId)
+      .select('-password')
+      .populate('followers', 'fullName studentId profileImage departmentShort batch');
 
     res.json({ 
       success: true, 

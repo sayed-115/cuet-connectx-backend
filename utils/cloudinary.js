@@ -1,9 +1,4 @@
-const cloudinary = require('cloudinary').v2;
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
-});
+const cloudinary = require('../config/cloudinary');
 
 exports.uploadImage = (filePath, folder) =>
   cloudinary.uploader.upload(filePath, {
@@ -13,9 +8,10 @@ exports.uploadImage = (filePath, folder) =>
   });
 
 exports.deleteImage = (imageUrl) => {
-  if (!imageUrl) return;
-  const parts = imageUrl.split('/');
-  const publicIdWithExt = parts[parts.length - 1];
-  const publicId = publicIdWithExt.split('.')[0];
+  if (!imageUrl || !imageUrl.includes('res.cloudinary.com')) return;
+  // Extract public_id from Cloudinary URL (everything after /upload/vXXX/)
+  const match = imageUrl.match(/\/upload\/(?:v\d+\/)?(.+)\.\w+$/);
+  if (!match) return;
+  const publicId = match[1];
   return cloudinary.uploader.destroy(publicId);
 };

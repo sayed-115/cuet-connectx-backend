@@ -1,23 +1,21 @@
 const express = require('express');
 const router = express.Router();
-const mongoose = require('mongoose');
 const { auth, optionalAuth } = require('../middleware/auth');
+const Post = require('../models/Post');
+const { postUpload } = require('../middleware/upload');
 
-// Post Schema
-const postSchema = new mongoose.Schema({
-  author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  content: { type: String, required: true, maxlength: 5000 },
-  image: { type: String, maxlength: 500 },
-  likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  comments: [{
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    text: { type: String, maxlength: 1000 },
-    createdAt: { type: Date, default: Date.now }
-  }],
-  createdAt: { type: Date, default: Date.now }
+// Upload post image to Cloudinary
+router.post('/upload-image', auth, postUpload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No image file uploaded' });
+    }
+    res.json({ success: true, imageUrl: req.file.path });
+  } catch (error) {
+    console.error('Post image upload error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
 });
-
-const Post = mongoose.models.Post || mongoose.model('Post', postSchema);
 
 // Get all posts (public)
 router.get('/', async (req, res) => {

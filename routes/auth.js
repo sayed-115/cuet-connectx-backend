@@ -57,13 +57,17 @@ router.post('/register', async (req, res) => {
       token,
       user: {
         id: user._id,
+        _id: user._id,
         fullName: user.fullName,
         email: user.email,
         studentId: user.studentId,
         batch: user.batch,
         department: user.department,
+        departmentShort: user.departmentShort,
         role: user.role,
-        status: user.status
+        status: user.status,
+        following: [],
+        followers: []
       }
     });
   } catch (error) {
@@ -109,6 +113,7 @@ router.post('/login', async (req, res) => {
       token,
       user: { 
         id: user._id, 
+        _id: user._id,
         fullName: user.fullName, 
         email: user.email, 
         studentId: user.studentId, 
@@ -118,7 +123,9 @@ router.post('/login', async (req, res) => {
         userType: user.userType,
         profileImage: user.profileImage,
         role: user.role,
-        status: user.status
+        status: user.status,
+        following: user.following || [],
+        followers: user.followers || []
       }
     });
   } catch (error) {

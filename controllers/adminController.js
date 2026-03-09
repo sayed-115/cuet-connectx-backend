@@ -1,5 +1,8 @@
 const mongoose = require('mongoose');
 const User = require('../models/User');
+const Job = require('../models/Job');
+const Post = require('../models/Post');
+const Scholarship = require('../models/Scholarship');
 
 // ── Constants ──────────────────────────────────────────────
 const ALLOWED_ROLES = ['student', 'alumni', 'admin'];
@@ -23,6 +26,9 @@ exports.getDashboardOverview = async (req, res) => {
       totalStudents,
       totalBannedUsers,
       totalAdmins,
+      totalJobs,
+      totalScholarships,
+      totalPosts,
       recentRegistrations
     ] = await Promise.all([
       User.countDocuments({}),
@@ -30,6 +36,9 @@ exports.getDashboardOverview = async (req, res) => {
       User.countDocuments({ role: 'student' }),
       User.countDocuments({ status: 'banned' }),
       User.countDocuments({ role: 'admin' }),
+      Job.countDocuments({}),
+      Scholarship.countDocuments({}),
+      Post.countDocuments({}),
       User.find({})
         .sort({ createdAt: -1 })
         .limit(5)
@@ -42,12 +51,42 @@ exports.getDashboardOverview = async (req, res) => {
       totalStudents,
       totalBannedUsers,
       totalAdmins,
+      totalJobs,
+      totalScholarships,
+      totalPosts,
       recentRegistrations
     });
   } catch (error) {
     console.error('Admin dashboard error:', error);
     return sendError(res, 'Server error', 500);
   }
+};
+
+// Job image upload — file already on Cloudinary via multer-storage-cloudinary
+exports.uploadJobImage = async (req, res, next) => {
+  try {
+    if (!req.file) return next({ status: 400, message: 'No image file uploaded' });
+    const imageUrl = req.file.path; // Cloudinary secure URL
+    res.json({ success: true, imageUrl });
+  } catch (err) { next(err); }
+};
+
+// Scholarship image upload — file already on Cloudinary via multer-storage-cloudinary
+exports.uploadScholarshipImage = async (req, res, next) => {
+  try {
+    if (!req.file) return next({ status: 400, message: 'No image file uploaded' });
+    const imageUrl = req.file.path; // Cloudinary secure URL
+    res.json({ success: true, imageUrl });
+  } catch (err) { next(err); }
+};
+
+// Post image upload — file already on Cloudinary via multer-storage-cloudinary
+exports.uploadPostImage = async (req, res, next) => {
+  try {
+    if (!req.file) return next({ status: 400, message: 'No image file uploaded' });
+    const imageUrl = req.file.path; // Cloudinary secure URL
+    res.json({ success: true, imageUrl });
+  } catch (err) { next(err); }
 };
 
 // ── 2. Get All Users (paginated + search + filter) ─────────
@@ -258,6 +297,271 @@ exports.approveAlumni = async (req, res) => {
     return sendSuccess(res, 'Alumni approved successfully', { user });
   } catch (error) {
     console.error('Admin approve alumni error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+// ── 8. Stats ───────────────────────────────────────────────
+exports.getStats = async (req, res) => {
+  try {
+    const [totalUsers, totalJobs, totalScholarships, totalPosts] = await Promise.all([
+      User.countDocuments({}),
+      Job.countDocuments({}),
+      Scholarship.countDocuments({}),
+      Post.countDocuments({})
+    ]);
+
+    return sendSuccess(res, 'Stats fetched', { totalUsers, totalJobs, totalScholarships, totalPosts });
+  } catch (error) {
+    console.error('Admin stats error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+// ── 9. Jobs Management ────────────────────────────────────
+exports.getJobs = async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
+    const search = (req.query.search || '').trim();
+
+    const query = {};
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [
+        { title: { $regex: escaped, $options: 'i' } },
+        { company: { $regex: escaped, $options: 'i' } }
+      ];
+    }
+
+    const [jobs, total] = await Promise.all([
+      Job.find(query)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .populate('postedBy', 'fullName studentId profileImage'),
+      Job.countDocuments(query)
+    ]);
+
+    return sendSuccess(res, 'Jobs fetched', {
+      jobs,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) || 1 }
+    });
+  } catch (error) {
+    console.error('Admin get jobs error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+exports.createJob = async (req, res) => {
+  try {
+    const { title, company, location, type, description, requirements, salary, deadline, applyLink, jobImage } = req.body;
+
+    if (!title || !company || !description) {
+      return sendError(res, 'Title, company, and description are required');
+    }
+
+    const job = new Job({
+      title: title.trim().slice(0, 200),
+      company: company.trim().slice(0, 100),
+      location: location?.trim().slice(0, 100) || '',
+      type: ['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(type) ? type : 'Full-time',
+      description: description.trim().slice(0, 5000),
+      requirements: Array.isArray(requirements) ? requirements.slice(0, 20) : [],
+      salary: salary || {},
+      applicationDeadline: deadline ? new Date(deadline) : null,
+      applyLink: applyLink?.trim().slice(0, 500) || '',
+      jobImage: jobImage?.trim().slice(0, 500) || null,
+      postedBy: req.user._id
+    });
+
+    await job.save();
+    return sendSuccess(res, 'Job created successfully', { job }, 201);
+  } catch (error) {
+    console.error('Admin create job error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+exports.updateJob = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) return sendError(res, 'Invalid job id');
+
+    const job = await Job.findById(id);
+    if (!job) return sendError(res, 'Job not found', 404);
+
+    const allowedFields = ['title', 'company', 'location', 'type', 'description', 'requirements', 'salary', 'applicationDeadline', 'applyLink', 'isActive', 'jobImage'];
+    const updates = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) updates[field] = req.body[field];
+    }
+
+    const updatedJob = await Job.findByIdAndUpdate(id, updates, { new: true })
+      .populate('postedBy', 'fullName studentId profileImage');
+    return sendSuccess(res, 'Job updated successfully', { job: updatedJob });
+  } catch (error) {
+    console.error('Admin update job error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+exports.deleteJob = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) return sendError(res, 'Invalid job id');
+
+    const job = await Job.findById(id);
+    if (!job) return sendError(res, 'Job not found', 404);
+
+    await Job.findByIdAndDelete(id);
+    return sendSuccess(res, 'Job deleted successfully');
+  } catch (error) {
+    console.error('Admin delete job error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+// ── 10. Scholarships Management ───────────────────────────
+exports.getScholarships = async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
+    const search = (req.query.search || '').trim();
+
+    const query = {};
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [
+        { title: { $regex: escaped, $options: 'i' } },
+        { organization: { $regex: escaped, $options: 'i' } }
+      ];
+    }
+
+    const [scholarships, total] = await Promise.all([
+      Scholarship.find(query)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .populate('postedBy', 'fullName studentId'),
+      Scholarship.countDocuments(query)
+    ]);
+
+    return sendSuccess(res, 'Scholarships fetched', {
+      scholarships,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) || 1 }
+    });
+  } catch (error) {
+    console.error('Admin get scholarships error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+exports.createScholarship = async (req, res) => {
+  try {
+    const { title, organization, amount, eligibility, description, deadline, link, scholarshipImage } = req.body;
+
+    if (!title || !organization) {
+      return sendError(res, 'Title and organization are required');
+    }
+
+    const scholarship = new Scholarship({
+      title: title.trim().slice(0, 200),
+      organization: organization.trim().slice(0, 100),
+      amount: amount?.trim().slice(0, 50) || '',
+      eligibility: eligibility?.trim().slice(0, 1000) || '',
+      description: description?.trim().slice(0, 5000) || '',
+      deadline: deadline ? new Date(deadline) : null,
+      link: link?.trim().slice(0, 500) || '',
+      scholarshipImage: scholarshipImage?.trim().slice(0, 500) || null,
+      postedBy: req.user._id
+    });
+
+    await scholarship.save();
+    return sendSuccess(res, 'Scholarship created successfully', { scholarship }, 201);
+  } catch (error) {
+    console.error('Admin create scholarship error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+exports.updateScholarship = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) return sendError(res, 'Invalid scholarship id');
+
+    const scholarship = await Scholarship.findById(id);
+    if (!scholarship) return sendError(res, 'Scholarship not found', 404);
+
+    const allowedFields = ['title', 'organization', 'amount', 'eligibility', 'description', 'deadline', 'link', 'scholarshipImage'];
+    const updates = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) updates[field] = req.body[field];
+    }
+
+    const updatedScholarship = await Scholarship.findByIdAndUpdate(id, updates, { new: true })
+      .populate('postedBy', 'fullName studentId');
+    return sendSuccess(res, 'Scholarship updated successfully', { scholarship: updatedScholarship });
+  } catch (error) {
+    console.error('Admin update scholarship error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+exports.deleteScholarship = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) return sendError(res, 'Invalid scholarship id');
+
+    const scholarship = await Scholarship.findById(id);
+    if (!scholarship) return sendError(res, 'Scholarship not found', 404);
+
+    await Scholarship.findByIdAndDelete(id);
+    return sendSuccess(res, 'Scholarship deleted successfully');
+  } catch (error) {
+    console.error('Admin delete scholarship error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+// ── 11. Community Moderation ──────────────────────────────
+exports.getPosts = async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
+
+    const [posts, total] = await Promise.all([
+      Post.find()
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .populate('author', 'fullName studentId profileImage departmentShort batch')
+        .populate('comments.user', 'fullName studentId profileImage'),
+      Post.countDocuments()
+    ]);
+
+    return sendSuccess(res, 'Posts fetched', {
+      posts,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) || 1 }
+    });
+  } catch (error) {
+    console.error('Admin get posts error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+exports.deletePost = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) return sendError(res, 'Invalid post id');
+
+    const post = await Post.findById(id);
+    if (!post) return sendError(res, 'Post not found', 404);
+
+    await Post.findByIdAndDelete(id);
+    return sendSuccess(res, 'Post deleted successfully');
+  } catch (error) {
+    console.error('Admin delete post error:', error);
     return sendError(res, 'Server error', 500);
   }
 };

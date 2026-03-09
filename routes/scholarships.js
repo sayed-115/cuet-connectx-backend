@@ -1,22 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const mongoose = require('mongoose');
 const { auth } = require('../middleware/auth');
-
-// Scholarship Schema
-const scholarshipSchema = new mongoose.Schema({
-  title: { type: String, required: true, maxlength: 200 },
-  organization: { type: String, required: true, maxlength: 100 },
-  amount: { type: String, maxlength: 50 },
-  eligibility: { type: String, maxlength: 1000 },
-  description: { type: String, maxlength: 5000 },
-  deadline: Date,
-  link: { type: String, maxlength: 500 },
-  postedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  createdAt: { type: Date, default: Date.now }
-});
-
-const Scholarship = mongoose.models.Scholarship || mongoose.model('Scholarship', scholarshipSchema);
+const Scholarship = require('../models/Scholarship');
 
 // Get all scholarships (public)
 router.get('/', async (req, res) => {

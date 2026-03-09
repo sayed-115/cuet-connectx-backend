@@ -127,12 +127,21 @@ const userSchema = new mongoose.Schema({
   skills: [{
     type: String
   }],
+  contactEmail: {
+    type: String,
+    default: ''
+  },
+  phone: {
+    type: String,
+    default: ''
+  },
   education: [{
     degree: String,
     institution: String,
     year: String,
     major: String,
-    focus: String
+    focus: String,
+    gpa: String
   }],
   following: [{
     type: mongoose.Schema.Types.ObjectId,

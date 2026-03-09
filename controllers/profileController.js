@@ -1,5 +1,5 @@
 const Profile = require('../models/Profile');
-const cloudinary = require('../utils/cloudinary');
+const cloudinaryUtils = require('../utils/cloudinary');
 
 exports.getMyProfile = async (req, res, next) => {
   try {
@@ -71,26 +71,52 @@ exports.updateSkills = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// Profile image upload — file already on Cloudinary via multer-storage-cloudinary
+exports.uploadProfileImage = async (req, res, next) => {
+  try {
+    if (!req.file) return next({ status: 400, message: 'No image file uploaded' });
+    const imageUrl = req.file.path; // Cloudinary secure URL
+    await Profile.findOneAndUpdate(
+      { user: req.user.id },
+      { $set: { profileImage: imageUrl } },
+      { new: true, upsert: true }
+    );
+    res.json({ success: true, imageUrl });
+  } catch (err) { next(err); }
+};
+
+// Avatar upload — file already on Cloudinary via multer-storage-cloudinary
 exports.updateAvatar = async (req, res, next) => {
   try {
     if (!req.file) return next({ status: 400, message: 'No file uploaded' });
     const profile = await Profile.findOne({ user: req.user.id });
-    if (profile.avatar) await cloudinary.deleteImage(profile.avatar);
-    const result = await cloudinary.uploadImage(req.file.path, 'avatars');
-    profile.avatar = result.secure_url;
-    await profile.save();
-    res.json({ success: true, message: 'Avatar updated', data: profile.avatar });
+    if (profile && profile.profileImage) {
+      await cloudinaryUtils.deleteImage(profile.profileImage);
+    }
+    const imageUrl = req.file.path; // Cloudinary secure URL
+    const updated = await Profile.findOneAndUpdate(
+      { user: req.user.id },
+      { $set: { profileImage: imageUrl } },
+      { new: true, upsert: true }
+    );
+    res.json({ success: true, message: 'Avatar updated', data: updated.profileImage });
   } catch (err) { next(err); }
 };
 
+// Cover image upload — file already on Cloudinary via multer-storage-cloudinary
 exports.updateCover = async (req, res, next) => {
   try {
     if (!req.file) return next({ status: 400, message: 'No file uploaded' });
     const profile = await Profile.findOne({ user: req.user.id });
-    if (profile.coverImage) await cloudinary.deleteImage(profile.coverImage);
-    const result = await cloudinary.uploadImage(req.file.path, 'covers');
-    profile.coverImage = result.secure_url;
-    await profile.save();
-    res.json({ success: true, message: 'Cover image updated', data: profile.coverImage });
+    if (profile && profile.coverImage) {
+      await cloudinaryUtils.deleteImage(profile.coverImage);
+    }
+    const imageUrl = req.file.path; // Cloudinary secure URL
+    const updated = await Profile.findOneAndUpdate(
+      { user: req.user.id },
+      { $set: { coverImage: imageUrl } },
+      { new: true, upsert: true }
+    );
+    res.json({ success: true, message: 'Cover image updated', data: updated.coverImage });
   } catch (err) { next(err); }
 };

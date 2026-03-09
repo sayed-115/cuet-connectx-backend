@@ -56,7 +56,7 @@ const jobSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
-  companyLogo: {
+  jobImage: {
     type: String,
     default: null
   },

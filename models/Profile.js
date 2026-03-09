@@ -29,7 +29,7 @@ const profileSchema = new mongoose.Schema({
     facebook: String,
     portfolio: String
   },
-  avatar: String,
+  profileImage: String, // Cloudinary URL
   coverImage: String,
   profileCompletion: { type: Number, default: 0 }
 }, { timestamps: true });

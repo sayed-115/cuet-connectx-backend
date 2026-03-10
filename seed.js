@@ -9,6 +9,12 @@ if (!MONGODB_URI) {
   process.exit(1);
 }
 
+// Safety guard — prevent accidental seeding against production
+if (process.env.NODE_ENV === 'production') {
+  console.error('Error: Cannot run seed script in production environment');
+  process.exit(1);
+}
+
 // Import models
 const User = require('./models/User');
 const Job = require('./models/Job');

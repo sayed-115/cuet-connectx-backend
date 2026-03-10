@@ -20,10 +20,13 @@ router.get('/', async (req, res) => {
       ];
     }
 
+    const safePage = Math.max(parseInt(page, 10) || 1, 1);
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+
     const jobs = await Job.find(query)
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit))
+      .limit(safeLimit)
+      .skip((safePage - 1) * safeLimit)
       .populate('postedBy', 'fullName studentId profileImage');
     
     const total = await Job.countDocuments(query);
@@ -31,7 +34,7 @@ router.get('/', async (req, res) => {
     res.json({ 
       success: true, 
       jobs,
-      pagination: { page: parseInt(page), limit: parseInt(limit), total }
+      pagination: { page: safePage, limit: safeLimit, total }
     });
   } catch (error) {
     console.error('Get jobs error:', error);
@@ -109,7 +112,18 @@ router.put('/:id', auth, async (req, res) => {
       }
     }
 
-    const updatedJob = await Job.findByIdAndUpdate(req.params.id, updates, { new: true });
+    // Sanitize string fields
+    for (const key of ['title', 'company', 'location', 'description', 'applyLink']) {
+      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, key === 'description' ? 5000 : 200);
+    }
+    if (updates.type && !['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(updates.type)) {
+      delete updates.type;
+    }
+    if (updates.requirements && Array.isArray(updates.requirements)) {
+      updates.requirements = updates.requirements.slice(0, 20);
+    }
+
+    const updatedJob = await Job.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
     res.json({ success: true, job: updatedJob, message: 'Job updated successfully' });
   } catch (error) {
     console.error('Update job error:', error);

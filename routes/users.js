@@ -39,18 +39,21 @@ router.get('/', async (req, res) => {
       ];
     }
 
+    const safePage = Math.max(parseInt(page, 10) || 1, 1);
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
+
     const users = await User.find(query)
       .select('-password')
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit));
+      .limit(safeLimit)
+      .skip((safePage - 1) * safeLimit);
     
     const total = await User.countDocuments(query);
     
     res.json({ 
       success: true, 
       users,
-      pagination: { page: parseInt(page), limit: parseInt(limit), total }
+      pagination: { page: safePage, limit: safeLimit, total }
     });
   } catch (error) {
     console.error('Get users error:', error);
@@ -248,7 +251,39 @@ router.put('/:id', auth, profileUpload.fields([{ name: 'profileImage', maxCount:
       }
     }
 
-    const currentUser = await User.findById(req.params.id);
+    // Sanitize string fields
+    for (const key of ['fullName', 'about', 'address', 'currentProfession', 'previousProfession']) {
+      if (typeof updates[key] === 'string') {
+        updates[key] = updates[key].trim().slice(0, 500);
+      }
+    }
+    if (updates.socialLinks && typeof updates.socialLinks === 'object') {
+      const allowed = ['linkedin', 'github', 'facebook', 'portfolio'];
+      const sanitized = {};
+      for (const k of allowed) {
+        sanitized[k] = typeof updates.socialLinks[k] === 'string' ? updates.socialLinks[k].trim().slice(0, 300) : '';
+      }
+      updates.socialLinks = sanitized;
+    }
+    if (updates.skills) {
+      if (!Array.isArray(updates.skills)) { return res.status(400).json({ success: false, message: 'Skills must be an array' }); }
+      updates.skills = updates.skills.filter(s => typeof s === 'string').map(s => s.trim().slice(0, 50)).slice(0, 30);
+    }
+    if (updates.researchInterests) {
+      if (!Array.isArray(updates.researchInterests)) { return res.status(400).json({ success: false, message: 'Research interests must be an array' }); }
+      updates.researchInterests = updates.researchInterests.filter(s => typeof s === 'string').map(s => s.trim().slice(0, 100)).slice(0, 20);
+    }
+    if (updates.education) {
+      if (!Array.isArray(updates.education)) { return res.status(400).json({ success: false, message: 'Education must be an array' }); }
+      updates.education = updates.education.slice(0, 10).map(edu => ({
+        degree: String(edu.degree || '').trim().slice(0, 200),
+        institution: String(edu.institution || '').trim().slice(0, 200),
+        year: String(edu.year || '').trim().slice(0, 50),
+        major: String(edu.major || '').trim().slice(0, 100),
+        focus: String(edu.focus || '').trim().slice(0, 100),
+        gpa: String(edu.gpa || '').trim().slice(0, 10),
+      }));
+    }
 
     // Use Cloudinary URLs from multer-storage-cloudinary
     if (req.files && req.files.profileImage) {
@@ -261,7 +296,7 @@ router.put('/:id', auth, profileUpload.fields([{ name: 'profileImage', maxCount:
       updates.coverImage = req.files.coverImage[0].path;
     }
 
-    const user = await User.findByIdAndUpdate(req.params.id, updates, { new: true }).select('-password');
+    const user = await User.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true }).select('-password');
 
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });

@@ -17,18 +17,21 @@ router.get('/', async (req, res) => {
       ];
     }
 
+    const safePage = Math.max(parseInt(page, 10) || 1, 1);
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+
     const scholarships = await Scholarship.find(query)
       .populate('postedBy', 'fullName studentId')
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit));
+      .limit(safeLimit)
+      .skip((safePage - 1) * safeLimit);
     
     const total = await Scholarship.countDocuments(query);
     
     res.json({ 
       success: true, 
       scholarships,
-      pagination: { page: parseInt(page), limit: parseInt(limit), total }
+      pagination: { page: safePage, limit: safeLimit, total }
     });
   } catch (error) {
     console.error('Get scholarships error:', error);
@@ -102,7 +105,12 @@ router.put('/:id', auth, async (req, res) => {
       }
     }
 
-    const updatedScholarship = await Scholarship.findByIdAndUpdate(req.params.id, updates, { new: true });
+    // Sanitize string fields
+    for (const key of ['title', 'organization', 'amount', 'eligibility', 'description', 'link']) {
+      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, key === 'description' ? 5000 : key === 'eligibility' ? 1000 : 200);
+    }
+
+    const updatedScholarship = await Scholarship.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
     res.json({ success: true, scholarship: updatedScholarship, message: 'Scholarship updated successfully' });
   } catch (error) {
     console.error('Update scholarship error:', error);

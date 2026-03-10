@@ -10,6 +10,11 @@ async function seedAdmin() {
     process.exit(1);
   }
 
+  if (process.env.NODE_ENV === 'production') {
+    console.error('Error: Cannot run admin seeder in production environment');
+    process.exit(1);
+  }
+
   try {
     await mongoose.connect(process.env.MONGODB_URI);
     console.log('Connected to MongoDB');

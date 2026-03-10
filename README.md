@@ -18,7 +18,7 @@
 ```
 Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
                                             →  Cloudinary (images)
-                                            →  Resend (emails)
+                                            →  Gmail SMTP (emails via Nodemailer)
 ```
 
 ---
@@ -38,7 +38,7 @@ Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
 
 ### How it works
 
-1. **Signup** → User created with `emailVerified: false` → SHA-256 hashed verification token stored → email sent via Resend → user clicks link → `emailVerified: true`
+1. **Signup** → User created with `emailVerified: false` → SHA-256 hashed verification token stored → email sent via Nodemailer → user clicks link → `emailVerified: true`
 2. **Login** → Blocked if `emailVerified: false` (403) → JWT issued on success (7-day expiry)
 3. **Forgot password** → Accepts email or studentId → SHA-256 hashed token stored → reset email sent → 10-minute expiry
 4. **Reset password** → Token verified → password updated → `passwordChangedAt` set → old JWTs invalidated
@@ -67,7 +67,7 @@ Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
 
 - Node.js 18+
 - MongoDB Atlas cluster (or local MongoDB)
-- [Resend](https://resend.com/) API key (free — 100 emails/day)
+- Gmail account with [App Password](https://myaccount.google.com/apppasswords) (enable 2-Step Verification first)
 - [Cloudinary](https://cloudinary.com/) account (image hosting)
 
 ### Installation
@@ -96,9 +96,9 @@ JWT_SECRET=your_jwt_secret_here
 # Cloudinary
 CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
 
-# Email (Resend — HTTPS API, works on Render free tier)
-RESEND_API_KEY=re_xxxxxxxxxxxx
-FROM_EMAIL=CUET ConnectX <onboarding@resend.dev>
+# Email (Gmail SMTP via Nodemailer)
+EMAIL_USER=your-gmail@gmail.com
+EMAIL_PASS=your-gmail-app-password
 
 # URLs
 FRONTEND_URL=http://localhost:5173
@@ -135,7 +135,7 @@ npm run seed-admin      # Create admin user
 5. Set `CORS_ORIGIN` to your Vercel frontend URL
 6. Set `FRONTEND_URL` to your Vercel frontend URL (used in email links)
 
-> **Note:** Render's free tier blocks outbound SMTP ports (25/465/587). That's why this project uses [Resend](https://resend.com/) (HTTPS-based email API) instead of Nodemailer/Gmail SMTP.
+> **Note:** Email is sent via Gmail SMTP using [Nodemailer](https://nodemailer.com/). You need a Gmail account with an [App Password](https://myaccount.google.com/apppasswords) (requires 2-Step Verification). Set `EMAIL_USER` and `EMAIL_PASS` in your Render environment variables.
 
 ---
 
@@ -166,7 +166,7 @@ npm run seed-admin      # Create admin user
 │   ├── posts.js           # Post CRUD
 │   └── adminRoutes.js     # Admin panel routes
 ├── utils/
-│   ├── email.js           # Resend email service
+│   ├── email.js           # Nodemailer email service (Gmail SMTP)
 │   └── cloudinary.js      # Cloudinary helpers
 ├── seed/                  # Database seeders
 ├── scripts/               # Admin scripts

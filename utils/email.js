@@ -1,22 +1,23 @@
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
-// Resend uses HTTPS API (port 443) — works on Render free tier
-// where outbound SMTP ports (25/465/587) are blocked.
-const resend = new Resend(process.env.RESEND_API_KEY);
-
-const FROM_EMAIL = process.env.FROM_EMAIL || 'CUET ConnectX <onboarding@resend.dev>';
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
 
 /**
  * Send email verification link to a newly registered user.
  */
 async function sendVerificationEmail(to, token) {
-  const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 5000}`;
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
   const verifyLink = `${frontendUrl}/verify-email?token=${token}`;
 
-  const { data, error } = await resend.emails.send({
-    from: FROM_EMAIL,
-    to: [to],
+  await transporter.sendMail({
+    from: `CUET ConnectX <${process.env.EMAIL_USER}>`,
+    to,
     subject: 'Verify Your Email — CUET ConnectX',
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -48,8 +49,6 @@ async function sendVerificationEmail(to, token) {
       </div>
     `,
   });
-
-  if (error) throw new Error(error.message);
 }
 
 /**
@@ -59,9 +58,9 @@ async function sendPasswordResetEmail(to, token) {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
   const resetLink = `${frontendUrl}/reset-password?token=${token}`;
 
-  const { data, error } = await resend.emails.send({
-    from: FROM_EMAIL,
-    to: [to],
+  await transporter.sendMail({
+    from: `CUET ConnectX <${process.env.EMAIL_USER}>`,
+    to,
     subject: 'Reset Your Password — CUET ConnectX',
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -93,8 +92,6 @@ async function sendPasswordResetEmail(to, token) {
       </div>
     `,
   });
-
-  if (error) throw new Error(error.message);
 }
 
 module.exports = { sendVerificationEmail, sendPasswordResetEmail };

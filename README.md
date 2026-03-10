@@ -1,180 +1,179 @@
-# CUET ConnectX - Backend API
+# CUET ConnectX — Backend API
 
 <div align="center">
-  
-  **RESTful API for CUET ConnectX Platform**
-  
-  [![Node.js](https://img.shields.io/badge/Node.js-22.x-339933?logo=node.js)](https://nodejs.org/)
-  [![Express](https://img.shields.io/badge/Express-4.21.2-000000?logo=express)](https://expressjs.com/)
-  [![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?logo=mongodb)](https://www.mongodb.com/atlas)
-  [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+**REST API for the CUET ConnectX platform**
+
+[![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js)](https://nodejs.org/)
+[![Express](https://img.shields.io/badge/Express-4.x-000000?logo=express)](https://expressjs.com/)
+[![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?logo=mongodb)](https://www.mongodb.com/atlas)
+[![Render](https://img.shields.io/badge/Deployed_on-Render-46E3B7?logo=render)](https://render.com/)
+
 </div>
 
 ---
 
-## 📖 About
+## Architecture
 
-This is the backend API server for CUET ConnectX - a platform connecting students and alumni of Chittagong University of Engineering and Technology (CUET).
-
-### ✨ Features
-
-- 🔐 **JWT Authentication** - Secure token-based authentication with expiry handling
-- 🛡️ **Protected Routes** - Auth middleware for secure API endpoints
-- 👤 **User Management** - Registration, login, profile management
-- 🔒 **Password Hashing** - Secure bcrypt password encryption (select: false)
-- 📊 **MongoDB Atlas** - Cloud database for scalable storage
-- 🎓 **Smart Student ID Parsing** - Auto-extracts batch, department, and roll from 7-digit ID
-- 👥 **Follow System** - Follow/unfollow with duplicate prevention
-- 🛡️ **Owner-only Updates** - Users can only modify their own content
-- 🌐 **CORS Enabled** - Multi-origin support for frontend integration
+```
+Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
+                                            →  Cloudinary (images)
+                                            →  Resend (emails)
+```
 
 ---
 
-## 🚀 Getting Started
+## Authentication Flow
+
+| Flow | Route | Method |
+|------|-------|--------|
+| Register | `/api/auth/register` | POST |
+| Login | `/api/auth/login` | POST |
+| Get current user | `/api/auth/me` | GET |
+| Verify email | `/api/auth/verify-email?token=` | GET |
+| Resend verification | `/api/auth/resend-verification` | POST |
+| Forgot password | `/api/auth/forgot-password` | POST |
+| Reset password | `/api/auth/reset-password` | POST |
+| Change password | `/api/users/change-password` | PUT |
+
+### How it works
+
+1. **Signup** → User created with `emailVerified: false` → verification email sent via Resend → user clicks link → `emailVerified: true`
+2. **Login** → Blocked if `emailVerified: false` (403) → JWT issued on success (7-day expiry)
+3. **Forgot password** → Accepts email or studentId → SHA-256 hashed token stored → reset email sent → 10-minute expiry
+4. **Reset password** → Token verified → password updated → `passwordChangedAt` set → old JWTs invalidated
+5. **Change password** → Current password verified → new password set → `passwordChangedAt` set
+6. **Session invalidation** → Auth middleware compares `JWT iat` vs `passwordChangedAt` → rejects stale tokens
+
+---
+
+## API Routes
+
+| Route | Description |
+|-------|-------------|
+| `/api/auth/*` | Authentication (register, login, verify, reset) |
+| `/api/users/*` | User profiles, follow/unfollow, change password |
+| `/api/jobs/*` | Job listings CRUD |
+| `/api/scholarships/*` | Scholarship listings CRUD |
+| `/api/posts/*` | Community posts CRUD |
+| `/api/admin/*` | Admin panel (user management, content moderation) |
+| `/api/health` | Health check |
+
+---
+
+## Getting Started
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v18 or higher)
-- [MongoDB Atlas](https://www.mongodb.com/atlas) account
+- Node.js 18+
+- MongoDB Atlas cluster (or local MongoDB)
+- [Resend](https://resend.com/) API key (free — 100 emails/day)
+- [Cloudinary](https://cloudinary.com/) account (image hosting)
 
 ### Installation
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/sayed-115/cuet-connectx-backend.git
-   cd cuet-connectx-backend
-   ```
+```bash
+git clone https://github.com/sayed-115/cuet-connectx-backend.git
+cd cuet-connectx-backend
+npm install
+```
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+### Environment Variables
 
-3. **Configure environment variables**
-   ```bash
-   cp .env.example .env
-   ```
-   
-   Edit `.env` with your values:
-   ```env
-   MONGODB_URI=your_mongodb_connection_string
-   JWT_SECRET=your_jwt_secret_key
-   PORT=5000
-   FRONTEND_URL=http://localhost:5173
-   ```
+Create a `.env` file (see `.env.example`):
 
-4. **Start the server**
-   ```bash
-   # Development
-   npm run dev
-   
-   # Production
-   npm start
-   ```
+```env
+# Server
+PORT=5000
+NODE_ENV=production
 
----
+# MongoDB
+MONGODB_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/cuet-connectx
 
-## 📡 API Endpoints
+# JWT
+JWT_SECRET=your_jwt_secret_here
 
-> 🔒 = Requires JWT token in Authorization header
+# Cloudinary
+CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
 
-### Authentication
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/auth/register` | ❌ | Register new user |
-| POST | `/api/auth/login` | ❌ | Login with email/studentId |
-| GET | `/api/auth/me` | 🔒 | Get current user |
+# Email (Resend — HTTPS API, works on Render free tier)
+RESEND_API_KEY=re_xxxxxxxxxxxx
+FROM_EMAIL=CUET ConnectX <onboarding@resend.dev>
 
-### Users
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/users` | ❌ | Get all users (paginated) |
-| GET | `/api/users/:id` | ❌ | Get user by ID |
-| PUT | `/api/users/:id` | 🔒 | Update profile (self only) |
-| POST | `/api/users/:id/follow` | 🔒 | Follow user |
-| POST | `/api/users/:id/unfollow` | 🔒 | Unfollow user |
+# URLs
+FRONTEND_URL=http://localhost:5173
+CORS_ORIGIN=http://localhost:5173
+```
 
-### Jobs
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/jobs` | ❌ | Get all jobs (paginated) |
-| GET | `/api/jobs/:id` | ❌ | Get job by ID |
-| POST | `/api/jobs` | 🔒 | Create job |
-| PUT | `/api/jobs/:id` | 🔒 | Update job (owner only) |
-| DELETE | `/api/jobs/:id` | 🔒 | Delete job (owner only) |
+### Run locally
 
-### Posts
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/posts` | ❌ | Get all posts (paginated) |
-| POST | `/api/posts` | 🔒 | Create post |
-| POST | `/api/posts/:id/like` | 🔒 | Like/unlike post |
-| POST | `/api/posts/:id/comment` | 🔒 | Add comment |
-| DELETE | `/api/posts/:id` | 🔒 | Delete post (author only) |
+```bash
+node server.js
+```
 
-### Scholarships
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/scholarships` | ❌ | Get all scholarships |
-| POST | `/api/scholarships` | 🔒 | Create scholarship |
-| DELETE | `/api/scholarships/:id` | 🔒 | Delete (owner only) |
+Server starts at `http://localhost:5000`.
 
-### Health Check
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/health` | API health status |
+### Seed data
+
+```bash
+node seed.js            # Seed jobs, scholarships, posts
+npm run seed-admin      # Create admin user
+```
 
 ---
 
-## 🗂️ Project Structure
+## Deployment (Render)
+
+1. Push to GitHub
+2. Create a **Web Service** on [Render](https://render.com)
+3. Settings:
+   - **Root Directory**: (leave empty)
+   - **Build Command**: `npm install`
+   - **Start Command**: `node server.js`
+4. Add all environment variables from `.env.example`
+5. Set `CORS_ORIGIN` to your Vercel frontend URL
+6. Set `FRONTEND_URL` to your Vercel frontend URL (used in email links)
+
+> **Note:** Render's free tier blocks outbound SMTP ports (25/465/587). That's why this project uses [Resend](https://resend.com/) (HTTPS-based email API) instead of Nodemailer/Gmail SMTP.
+
+---
+
+## Project Structure
 
 ```
-cuet-connectx-backend/
-├── config/
-│   └── db.js              # MongoDB connection
-├── middleware/
-│   └── auth.js            # JWT authentication middleware
-├── models/
-│   ├── User.js            # User schema with auto ID parsing
-│   └── Job.js             # Job schema
-├── routes/
-│   ├── auth.js            # Authentication routes
-│   ├── users.js           # User routes (with follow system)
-│   ├── jobs.js            # Job routes (protected CRUD)
-│   ├── scholarships.js    # Scholarship routes
-│   └── posts.js           # Posts routes (with like/comment)
 ├── server.js              # Express app entry point
-├── .env.example           # Environment template
-├── PRODUCTION_CHECKLIST.md # Deployment guide
-└── package.json
+├── config/
+│   └── cloudinary.js      # Cloudinary configuration
+├── controllers/
+│   ├── adminController.js # Admin operations
+│   └── profileController.js
+├── middleware/
+│   ├── auth.js            # JWT auth + session invalidation
+│   ├── authorizeAdmin.js  # Admin role check
+│   ├── upload.js          # Cloudinary multer middleware
+│   └── validate.js        # Input validation
+├── models/
+│   ├── User.js            # User schema (auth, profile, verification)
+│   ├── Job.js             # Job listing schema
+│   ├── Scholarship.js     # Scholarship schema
+│   └── Post.js            # Community post schema
+├── routes/
+│   ├── auth.js            # Auth routes (register, login, verify, reset)
+│   ├── users.js           # User CRUD, follow, change password
+│   ├── jobs.js            # Job CRUD
+│   ├── scholarships.js    # Scholarship CRUD
+│   ├── posts.js           # Post CRUD
+│   └── adminRoutes.js     # Admin panel routes
+├── utils/
+│   ├── email.js           # Resend email service
+│   └── cloudinary.js      # Cloudinary helpers
+├── seed/                  # Database seeders
+├── scripts/               # Admin scripts
+└── .env.example           # Environment template
 ```
 
 ---
 
-## 🔧 Tech Stack
+## License
 
-- **Runtime:** Node.js
-- **Framework:** Express.js
-- **Database:** MongoDB Atlas with Mongoose ODM
-- **Authentication:** JWT (jsonwebtoken)
-- **Password Hashing:** bcryptjs
-- **Environment:** dotenv
-
----
-
-## 📜 License
-
-This project is licensed under the MIT License.
-
----
-
-## 👨‍💻 Author
-
-**Md Abu Sayed**
-- GitHub: [@sayed-115](https://github.com/sayed-115)
-
----
-
-<div align="center">
-  Made with ❤️ for CUETians
-</div>
+MIT

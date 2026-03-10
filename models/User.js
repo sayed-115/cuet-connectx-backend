@@ -7,14 +7,14 @@ const DEPARTMENT_CODES = {
   '02': 'Electrical & Electronic Engineering',
   '03': 'Mechanical Engineering',
   '04': 'Computer Science & Engineering',
-  '05': 'Electronics & Communication Engineering',
-  '06': 'Urban & Regional Planning',
+  '05': 'Urban & Regional Planning',
+  '06': 'Architecture',
   '07': 'Petroleum & Mining Engineering',
-  '08': 'Architecture',
-  '09': 'Physics',
-  '10': 'Chemistry',
-  '11': 'Mathematics',
-  '12': 'Humanities',
+  '08': 'Electronics & Telecommunication Engineering',
+  '09': 'Mechatronics & Industrial Engineering',
+  '10': 'Water Resources Engineering',
+  '11': 'Biomedical Engineering',
+  '12': 'Materials Science & Engineering',
 };
 
 const DEPARTMENT_SHORT = {
@@ -22,14 +22,14 @@ const DEPARTMENT_SHORT = {
   '02': 'EEE',
   '03': 'ME',
   '04': 'CSE',
-  '05': 'ECE',
-  '06': 'URP',
+  '05': 'URP',
+  '06': 'ARCH',
   '07': 'PME',
-  '08': 'ARCH',
-  '09': 'PHY',
-  '10': 'CHEM',
-  '11': 'MATH',
-  '12': 'HUM',
+  '08': 'ETE',
+  '09': 'MIE',
+  '10': 'WRE',
+  '11': 'BME',
+  '12': 'MSE',
 };
 
 const userSchema = new mongoose.Schema({
@@ -186,18 +186,33 @@ const userSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// Parse a CUET student ID (YYDDRRR) into its components
+function parseStudentId(studentId) {
+  if (!studentId || !/^\d{7}$/.test(studentId)) {
+    return null;
+  }
+
+  const batchCode = studentId.substring(0, 2);
+  const departmentCode = studentId.substring(2, 4);
+  const rollNumber = studentId.substring(4, 7);
+
+  return {
+    batchYear: 2000 + parseInt(batchCode, 10),
+    departmentCode,
+    departmentName: DEPARTMENT_CODES[departmentCode] || 'Unknown Department',
+    rollNumber,
+  };
+}
+
 // Parse student ID before saving
 userSchema.pre('validate', function() {
-  if (this.studentId && this.studentId.length === 7) {
-    const batchCode = this.studentId.substring(0, 2);
-    const deptCode = this.studentId.substring(2, 4);
-    const roll = this.studentId.substring(4, 7);
-    
-    this.batch = 2000 + parseInt(batchCode);
-    this.department = DEPARTMENT_CODES[deptCode] || 'Unknown';
-    this.departmentShort = DEPARTMENT_SHORT[deptCode] || 'N/A';
-    this.roll = roll;
-    this.userType = this.batch >= 2020 ? 'student' : 'alumni';
+  const parsed = parseStudentId(this.studentId);
+  if (parsed) {
+    this.batch = parsed.batchYear;
+    this.department = parsed.departmentName;
+    this.departmentShort = DEPARTMENT_SHORT[parsed.departmentCode] || 'N/A';
+    this.roll = parsed.rollNumber;
+    this.userType = parsed.batchYear >= 2020 ? 'student' : 'alumni';
     // Only auto-assign role during initial registration.
     // This prevents the hook from overriding admin-set role changes.
     if (this.isNew && this.role !== 'admin') {
@@ -205,6 +220,9 @@ userSchema.pre('validate', function() {
     }
   }
 });
+
+// Expose parseStudentId as a static method on the model
+userSchema.statics.parseStudentId = parseStudentId;
 
 // Hash password before saving
 userSchema.pre('save', async function() {

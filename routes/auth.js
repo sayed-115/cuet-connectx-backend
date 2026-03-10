@@ -42,13 +42,14 @@ router.post('/register', async (req, res) => {
 
     // Create user (password hashing is handled by the User model pre-save hook)
     const emailToken = crypto.randomBytes(32).toString('hex');
+    const hashedEmailToken = crypto.createHash('sha256').update(emailToken).digest('hex');
 
     const user = new User({
       fullName,
       email,
       password,
       studentId,
-      emailVerificationToken: emailToken,
+      emailVerificationToken: hashedEmailToken,
       emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
     });
 
@@ -159,8 +160,10 @@ router.get('/verify-email', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Verification token is required' });
     }
 
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
     const user = await User.findOne({
-      emailVerificationToken: token,
+      emailVerificationToken: hashedToken,
       emailVerificationExpires: { $gt: Date.now() },
     }).select('+emailVerificationToken +emailVerificationExpires');
 
@@ -201,7 +204,8 @@ router.post('/resend-verification', async (req, res) => {
 
     // Generate new token
     const emailToken = crypto.randomBytes(32).toString('hex');
-    user.emailVerificationToken = emailToken;
+    const hashedEmailToken = crypto.createHash('sha256').update(emailToken).digest('hex');
+    user.emailVerificationToken = hashedEmailToken;
     user.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await user.save();
 

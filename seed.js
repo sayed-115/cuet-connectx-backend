@@ -3,7 +3,11 @@ const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
 // Connect to MongoDB
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://cuetconnectx:uGHA6x6YCq1QsgpL@cluster0.meblnxj.mongodb.net/cuet-connectx';
+const MONGODB_URI = process.env.MONGODB_URI;
+if (!MONGODB_URI) {
+  console.error('Error: MONGODB_URI is missing in .env file');
+  process.exit(1);
+}
 
 // Import models
 const User = require('./models/User');
@@ -15,13 +19,6 @@ async function seedDatabase() {
   try {
     await mongoose.connect(MONGODB_URI);
     console.log('✅ Connected to MongoDB');
-
-    // Clear existing data (optional - comment out if you want to keep existing)
-    // await User.deleteMany({});
-    // await Job.deleteMany({});
-    // await Post.deleteMany({});
-    // await Scholarship.deleteMany({});
-    // console.log('🗑️  Cleared existing data');
 
     // ============== SAMPLE USERS ==============
     const sampleUsers = [

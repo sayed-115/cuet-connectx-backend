@@ -38,7 +38,7 @@ Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
 
 ### How it works
 
-1. **Signup** → User created with `emailVerified: false` → verification email sent via Resend → user clicks link → `emailVerified: true`
+1. **Signup** → User created with `emailVerified: false` → SHA-256 hashed verification token stored → email sent via Resend → user clicks link → `emailVerified: true`
 2. **Login** → Blocked if `emailVerified: false` (403) → JWT issued on success (7-day expiry)
 3. **Forgot password** → Accepts email or studentId → SHA-256 hashed token stored → reset email sent → 10-minute expiry
 4. **Reset password** → Token verified → password updated → `passwordChangedAt` set → old JWTs invalidated
@@ -102,6 +102,7 @@ FROM_EMAIL=CUET ConnectX <onboarding@resend.dev>
 
 # URLs
 FRONTEND_URL=http://localhost:5173
+BACKEND_URL=http://localhost:5000
 CORS_ORIGIN=http://localhost:5173
 ```
 

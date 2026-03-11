@@ -1,15 +1,8 @@
-const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail');
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  connectionTimeout: 10000, // 10s to establish connection
-  greetingTimeout: 10000,   // 10s for SMTP greeting
-  socketTimeout: 15000,     // 15s for socket inactivity
-});
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+const FROM_EMAIL = process.env.EMAIL_USER || 'noreply@cuetconnectx.com';
 
 /**
  * Send email verification link to a newly registered user.
@@ -18,9 +11,9 @@ async function sendVerificationEmail(to, token) {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
   const verifyLink = `${frontendUrl}/verify-email?token=${token}`;
 
-  await transporter.sendMail({
-    from: `CUET ConnectX <${process.env.EMAIL_USER}>`,
+  await sgMail.send({
     to,
+    from: { email: FROM_EMAIL, name: 'CUET ConnectX' },
     subject: 'Verify Your Email — CUET ConnectX',
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -61,9 +54,9 @@ async function sendPasswordResetEmail(to, token) {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
   const resetLink = `${frontendUrl}/reset-password?token=${token}`;
 
-  await transporter.sendMail({
-    from: `CUET ConnectX <${process.env.EMAIL_USER}>`,
+  await sgMail.send({
     to,
+    from: { email: FROM_EMAIL, name: 'CUET ConnectX' },
     subject: 'Reset Your Password — CUET ConnectX',
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">

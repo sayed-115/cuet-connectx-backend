@@ -18,7 +18,7 @@
 ```
 Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
                                             →  Cloudinary (images)
-                                            →  Gmail SMTP (emails via Nodemailer)
+                                            →  SendGrid (transactional emails)
 ```
 
 ---
@@ -38,7 +38,7 @@ Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
 
 ### How it works
 
-1. **Signup** → User created with `emailVerified: false` → SHA-256 hashed verification token stored → email sent via Nodemailer → user clicks link → `emailVerified: true`
+1. **Signup** → User created with `emailVerified: false` → SHA-256 hashed verification token stored → email sent via SendGrid → user clicks link → `emailVerified: true`
 2. **Login** → Blocked if `emailVerified: false` (403) → JWT issued on success (7-day expiry)
 3. **Forgot password** → Accepts email or studentId → SHA-256 hashed token stored → reset email sent → 10-minute expiry
 4. **Reset password** → Token verified → password updated → `passwordChangedAt` set → old JWTs invalidated
@@ -67,7 +67,7 @@ Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
 
 - Node.js 18+
 - MongoDB Atlas cluster (or local MongoDB)
-- Gmail account with [App Password](https://myaccount.google.com/apppasswords) (enable 2-Step Verification first)
+- [SendGrid](https://sendgrid.com/) account with API key and verified sender email
 - [Cloudinary](https://cloudinary.com/) account (image hosting)
 
 ### Installation
@@ -96,9 +96,9 @@ JWT_SECRET=your_jwt_secret_here
 # Cloudinary
 CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
 
-# Email (Gmail SMTP via Nodemailer)
-EMAIL_USER=your-gmail@gmail.com
-EMAIL_PASS=your-gmail-app-password
+# Email (SendGrid HTTP API)
+EMAIL_USER=your-verified-sender@gmail.com
+SENDGRID_API_KEY=your-sendgrid-api-key
 
 # URLs
 FRONTEND_URL=http://localhost:5173

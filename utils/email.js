@@ -1,14 +1,14 @@
 const sgMail = require('@sendgrid/mail');
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+sgMail.setApiKey((process.env.SENDGRID_API_KEY || '').trim());
 
-const FROM_EMAIL = process.env.EMAIL_USER || 'noreply@cuetconnectx.com';
+const FROM_EMAIL = (process.env.EMAIL_USER || 'noreply@cuetconnectx.com').trim();
 
 /**
  * Send email verification link to a newly registered user.
  */
 async function sendVerificationEmail(to, token) {
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').trim();
   const verifyLink = `${frontendUrl}/verify-email?token=${token}`;
 
   await sgMail.send({
@@ -51,7 +51,7 @@ async function sendVerificationEmail(to, token) {
  * Send password reset link to a user.
  */
 async function sendPasswordResetEmail(to, token) {
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').trim();
   const resetLink = `${frontendUrl}/reset-password?token=${token}`;
 
   await sgMail.send({

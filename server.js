@@ -85,9 +85,9 @@ app.get('/api/health', (req, res) => {
     version: 7,
     message: 'CUET ConnectX API is running!',
     email_config: {
-      EMAIL_USER: process.env.EMAIL_USER ? '✓ set' : '✗ MISSING',
-      SENDGRID_API_KEY: process.env.SENDGRID_API_KEY ? `✓ set (${process.env.SENDGRID_API_KEY.substring(0, 5)}...)` : '✗ MISSING',
-      FRONTEND_URL: process.env.FRONTEND_URL || '✗ MISSING (will default to localhost)',
+      EMAIL_USER: process.env.EMAIL_USER ? `✓ ${process.env.EMAIL_USER.trim()}` : '✗ MISSING',
+      SENDGRID_API_KEY: process.env.SENDGRID_API_KEY ? `✓ set (${process.env.SENDGRID_API_KEY.trim().substring(0, 5)}...)` : '✗ MISSING',
+      FRONTEND_URL: process.env.FRONTEND_URL ? `✓ ${process.env.FRONTEND_URL.trim()}` : '✗ MISSING (will default to localhost)',
     }
   });
 });

@@ -1,19 +1,85 @@
 const sgMail = require('@sendgrid/mail');
 
-sgMail.setApiKey((process.env.SENDGRID_API_KEY || '').trim());
+const SENDGRID_API_KEY = (process.env.SENDGRID_API_KEY || '').trim();
+if (SENDGRID_API_KEY) {
+  sgMail.setApiKey(SENDGRID_API_KEY);
+} else {
+  console.error('[Email] SENDGRID_API_KEY is missing. Email delivery will fail until it is configured.');
+}
 
-const FROM_EMAIL = (process.env.EMAIL_USER || 'noreply@cuetconnectx.com').trim();
+const FROM_EMAIL = (process.env.EMAIL_USER || '').trim();
+
+function getFrontendUrl() {
+  const frontendUrl = (process.env.FRONTEND_URL || '').trim();
+  if (!frontendUrl) {
+    console.warn('[Email] FRONTEND_URL is missing. Using fallback http://localhost:5173 for email links.');
+    return 'http://localhost:5173';
+  }
+  return frontendUrl.replace(/\/+$/, '');
+}
+
+function tokenForLog(token) {
+  if (!token) return 'missing';
+  if (process.env.NODE_ENV === 'production') return `${token.slice(0, 8)}...`;
+  return token;
+}
+
+function assertEmailConfig() {
+  const missing = [];
+  if (!SENDGRID_API_KEY) missing.push('SENDGRID_API_KEY');
+  if (!FROM_EMAIL) missing.push('EMAIL_USER');
+
+  if (missing.length > 0) {
+    throw new Error(`[Email] Missing required email environment variables: ${missing.join(', ')}`);
+  }
+}
+
+async function sendWithLogging({ to, subject, html, flow, token }) {
+  assertEmailConfig();
+
+  try {
+    const [response] = await sgMail.send({
+      to,
+      from: { email: FROM_EMAIL, name: 'CUET ConnectX' },
+      subject,
+      html,
+    });
+
+    const messageId = response?.headers?.['x-message-id'] || response?.headers?.['X-Message-Id'] || 'n/a';
+    console.log(`[Email][${flow}] SendGrid accepted email`, {
+      to,
+      from: FROM_EMAIL,
+      statusCode: response?.statusCode,
+      messageId,
+      tokenPreview: tokenForLog(token),
+    });
+
+    return response;
+  } catch (error) {
+    const sgErrors = error?.response?.body?.errors || error?.response?.body || null;
+    console.error(`[Email][${flow}] SendGrid send failed`, {
+      to,
+      from: FROM_EMAIL,
+      tokenPreview: tokenForLog(token),
+      error: error.message,
+      statusCode: error?.code || error?.response?.statusCode,
+      sendgrid: sgErrors,
+    });
+    throw error;
+  }
+}
 
 /**
  * Send email verification link to a newly registered user.
  */
 async function sendVerificationEmail(to, token) {
-  const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').trim();
+  const frontendUrl = getFrontendUrl();
   const verifyLink = `${frontendUrl}/verify-email?token=${token}`;
 
-  await sgMail.send({
+  await sendWithLogging({
     to,
-    from: { email: FROM_EMAIL, name: 'CUET ConnectX' },
+    token,
+    flow: 'verification',
     subject: 'Verify Your Email — CUET ConnectX',
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -51,12 +117,13 @@ async function sendVerificationEmail(to, token) {
  * Send password reset link to a user.
  */
 async function sendPasswordResetEmail(to, token) {
-  const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').trim();
+  const frontendUrl = getFrontendUrl();
   const resetLink = `${frontendUrl}/reset-password?token=${token}`;
 
-  await sgMail.send({
+  await sendWithLogging({
     to,
-    from: { email: FROM_EMAIL, name: 'CUET ConnectX' },
+    token,
+    flow: 'password-reset',
     subject: 'Reset Your Password — CUET ConnectX',
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">

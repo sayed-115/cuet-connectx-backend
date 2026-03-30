@@ -89,6 +89,8 @@ NODE_ENV=production
 
 # MongoDB
 MONGODB_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/cuet-connectx
+# Railway alternative:
+# DATABASE_URL=mongodb+srv://<user>:<pass>@cluster.mongodb.net/cuet-connectx
 
 # JWT
 JWT_SECRET=your_jwt_secret_here
@@ -97,7 +99,7 @@ JWT_SECRET=your_jwt_secret_here
 CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
 
 # Email (SendGrid HTTP API)
-EMAIL_USER=your-verified-sender@gmail.com
+EMAIL_USER=your-verified-sender@yourdomain.com
 SENDGRID_API_KEY=your-sendgrid-api-key
 
 # URLs
@@ -135,7 +137,7 @@ npm run seed-admin      # Create admin user
 5. Set `CORS_ORIGIN` to your Vercel frontend URL
 6. Set `FRONTEND_URL` to your Vercel frontend URL (used in email links)
 
-> **Note:** Email is sent via Gmail SMTP using [Nodemailer](https://nodemailer.com/). You need a Gmail account with an [App Password](https://myaccount.google.com/apppasswords) (requires 2-Step Verification). Set `EMAIL_USER` and `EMAIL_PASS` in your Render environment variables.
+> **Note:** Email is sent via SendGrid (`@sendgrid/mail`). `EMAIL_USER` must be a verified sender identity/domain in SendGrid, and `SENDGRID_API_KEY` must be a valid API key with Mail Send permissions.
 
 ---
 
@@ -166,7 +168,7 @@ npm run seed-admin      # Create admin user
 │   ├── posts.js           # Post CRUD
 │   └── adminRoutes.js     # Admin panel routes
 ├── utils/
-│   ├── email.js           # Nodemailer email service (Gmail SMTP)
+│   ├── email.js           # SendGrid email service
 │   └── cloudinary.js      # Cloudinary helpers
 ├── seed/                  # Database seeders
 ├── scripts/               # Admin scripts

@@ -7,6 +7,12 @@ const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
 const { sendVerificationEmail, sendPasswordResetEmail } = require('../utils/email');
 
+function tokenForLog(token) {
+  if (!token) return 'missing';
+  if (process.env.NODE_ENV === 'production') return `${token.slice(0, 8)}...`;
+  return token;
+}
+
 // Rate limiters — prevent brute-force on auth endpoints
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -43,6 +49,13 @@ router.post('/register', async (req, res) => {
     // Create user (password hashing is handled by the User model pre-save hook)
     const emailToken = crypto.randomBytes(32).toString('hex');
     const hashedEmailToken = crypto.createHash('sha256').update(emailToken).digest('hex');
+    const emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    console.log('[Auth][register] Generated email verification token', {
+      email,
+      token: tokenForLog(emailToken),
+      expiresAt: emailVerificationExpires.toISOString(),
+    });
 
     const user = new User({
       fullName,
@@ -50,22 +63,41 @@ router.post('/register', async (req, res) => {
       password,
       studentId,
       emailVerificationToken: hashedEmailToken,
-      emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+      emailVerificationExpires,
     });
 
     await user.save();
+    console.log('[Auth][register] User created', {
+      userId: String(user._id),
+      email: user.email,
+      emailVerified: user.emailVerified,
+    });
 
-    // Send verification email (fire-and-forget so registration succeeds even if SMTP fails)
+    // Send verification email and report delivery status explicitly
+    let emailSent = true;
     try {
       await sendVerificationEmail(email, emailToken);
+      console.log('[Auth][register] Verification email send requested', {
+        userId: String(user._id),
+        email: user.email,
+      });
     } catch (emailErr) {
-      console.error('Failed to send verification email:', emailErr.message);
+      emailSent = false;
+      console.error('[Auth][register] Failed to send verification email', {
+        userId: String(user._id),
+        email: user.email,
+        error: emailErr.message,
+        sendgrid: emailErr?.response?.body?.errors || emailErr?.response?.body || null,
+      });
     }
 
     res.status(201).json({
       success: true,
-      message: 'Registration successful! Please check your email to verify your account.',
+      message: emailSent
+        ? 'Registration successful! Please check your email to verify your account.'
+        : 'Registration successful, but we could not send the verification email. Please use resend verification from the login page.',
       needsVerification: true,
+      emailSent,
     });
   } catch (error) {
     console.error('Registration error:', error.message, error);
@@ -157,8 +189,11 @@ router.get('/verify-email', async (req, res) => {
     const { token } = req.query;
 
     if (!token) {
+      console.warn('[Auth][verify-email] Missing token in request');
       return res.status(400).json({ success: false, message: 'Verification token is required' });
     }
+
+    console.log('[Auth][verify-email] Token received', { token: tokenForLog(token) });
 
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
 
@@ -168,6 +203,7 @@ router.get('/verify-email', async (req, res) => {
     }).select('+emailVerificationToken +emailVerificationExpires');
 
     if (!user) {
+      console.warn('[Auth][verify-email] Invalid or expired token', { token: tokenForLog(token) });
       return res.status(400).json({ success: false, message: 'Invalid or expired verification link. Please request a new one.' });
     }
 
@@ -175,6 +211,11 @@ router.get('/verify-email', async (req, res) => {
     user.emailVerificationToken = undefined;
     user.emailVerificationExpires = undefined;
     await user.save();
+
+    console.log('[Auth][verify-email] Email verified successfully', {
+      userId: String(user._id),
+      email: user.email,
+    });
 
     res.json({ success: true, message: 'Email verified successfully! You can now log in.' });
   } catch (error) {
@@ -209,10 +250,26 @@ router.post('/resend-verification', async (req, res) => {
     user.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await user.save();
 
+    console.log('[Auth][resend-verification] Generated new token', {
+      userId: String(user._id),
+      email: user.email,
+      token: tokenForLog(emailToken),
+      expiresAt: user.emailVerificationExpires.toISOString(),
+    });
+
     try {
       await sendVerificationEmail(email, emailToken);
+      console.log('[Auth][resend-verification] Verification email send requested', {
+        userId: String(user._id),
+        email: user.email,
+      });
     } catch (emailErr) {
-      console.error('Failed to resend verification email:', emailErr.message);
+      console.error('[Auth][resend-verification] Failed to send verification email', {
+        userId: String(user._id),
+        email: user.email,
+        error: emailErr.message,
+        sendgrid: emailErr?.response?.body?.errors || emailErr?.response?.body || null,
+      });
       return res.status(500).json({ success: false, message: 'Failed to send verification email. Please try again later.' });
     }
 
@@ -235,6 +292,10 @@ router.post('/forgot-password', async (req, res) => {
     const user = await User.findOne(email ? { email } : { studentId });
 
     if (!user) {
+      console.log('[Auth][forgot-password] No matching user found', {
+        hasEmail: Boolean(email),
+        hasStudentId: Boolean(studentId),
+      });
       // Don't reveal whether the account exists
       return res.json({ success: true, message: 'If an account with that information exists, a password reset link has been sent.' });
     }
@@ -247,10 +308,26 @@ router.post('/forgot-password', async (req, res) => {
     user.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
     await user.save();
 
+    console.log('[Auth][forgot-password] Generated password reset token', {
+      userId: String(user._id),
+      email: user.email,
+      token: tokenForLog(resetToken),
+      expiresAt: user.passwordResetExpires.toISOString(),
+    });
+
     try {
       await sendPasswordResetEmail(user.email, resetToken);
+      console.log('[Auth][forgot-password] Password reset email send requested', {
+        userId: String(user._id),
+        email: user.email,
+      });
     } catch (emailErr) {
-      console.error('Failed to send password reset email:', emailErr.message);
+      console.error('[Auth][forgot-password] Failed to send password reset email', {
+        userId: String(user._id),
+        email: user.email,
+        error: emailErr.message,
+        sendgrid: emailErr?.response?.body?.errors || emailErr?.response?.body || null,
+      });
       user.passwordResetToken = undefined;
       user.passwordResetExpires = undefined;
       await user.save();
@@ -270,8 +347,11 @@ router.post('/reset-password', async (req, res) => {
     const { token, newPassword } = req.body;
 
     if (!token || !newPassword) {
+      console.warn('[Auth][reset-password] Missing token or new password');
       return res.status(400).json({ success: false, message: 'Token and new password are required' });
     }
+
+    console.log('[Auth][reset-password] Token received', { token: tokenForLog(token) });
 
     if (newPassword.length < 8) {
       return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
@@ -285,6 +365,7 @@ router.post('/reset-password', async (req, res) => {
     }).select('+passwordResetToken +passwordResetExpires');
 
     if (!user) {
+      console.warn('[Auth][reset-password] Invalid or expired reset token', { token: tokenForLog(token) });
       return res.status(400).json({ success: false, message: 'Invalid or expired reset link. Please request a new one.' });
     }
 
@@ -293,6 +374,12 @@ router.post('/reset-password', async (req, res) => {
     user.passwordResetExpires = undefined;
     user.passwordChangedAt = new Date();
     await user.save();
+
+    console.log('[Auth][reset-password] Password reset successful', {
+      userId: String(user._id),
+      email: user.email,
+      passwordChangedAt: user.passwordChangedAt.toISOString(),
+    });
 
     res.json({ success: true, message: 'Password reset successfully! You can now log in with your new password.' });
   } catch (error) {

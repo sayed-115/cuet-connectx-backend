@@ -5,6 +5,9 @@ const { auth, optionalAuth } = require('../middleware/auth');
 const { profileUpload } = require('../middleware/upload');
 const cloudinaryUtils = require('../utils/cloudinary');
 
+const normalize = (value) => String(value || '').toLowerCase().trim();
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // Get current user profile (authenticated)
 router.get('/profile', auth, async (req, res) => {
   try {
@@ -26,18 +29,60 @@ router.get('/profile', auth, async (req, res) => {
 // Get all users (public profiles)
 router.get('/', async (req, res) => {
   try {
-    const { batch, department, search, limit = 50, page = 1 } = req.query;
+    const { batch, department, role, search, limit = 50, page = 1 } = req.query;
+
+    const filters = {
+      search: normalize(search),
+      department: normalize(department),
+      batch: normalize(batch),
+      role: normalize(role),
+    };
+
     const query = { isActive: true };
-    
-    if (batch) query.batch = parseInt(batch);
-    if (department) query.departmentShort = department;
-    if (search) {
-      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      query.$or = [
-        { fullName: { $regex: escaped, $options: 'i' } },
-        { studentId: { $regex: escaped, $options: 'i' } }
-      ];
+    const andConditions = [];
+
+    if (filters.batch) {
+      const parsedBatch = Number.parseInt(filters.batch, 10);
+      if (!Number.isNaN(parsedBatch)) {
+        andConditions.push({ batch: parsedBatch });
+      }
     }
+
+    if (filters.department) {
+      andConditions.push({
+        departmentShort: { $regex: `^${escapeRegex(filters.department)}$`, $options: 'i' },
+      });
+    }
+
+    if (filters.role) {
+      const roleRegex = { $regex: `^${escapeRegex(filters.role)}$`, $options: 'i' };
+      andConditions.push({
+        $or: [
+          { role: roleRegex },
+          { userType: roleRegex },
+        ],
+      });
+    }
+
+    if (filters.search) {
+      const searchRegex = { $regex: escapeRegex(filters.search), $options: 'i' };
+      andConditions.push({
+        $or: [
+          { fullName: searchRegex },
+          { studentId: searchRegex },
+          { departmentShort: searchRegex },
+          { currentProfession: searchRegex },
+          { about: searchRegex },
+        ],
+      });
+    }
+
+    if (andConditions.length > 0) {
+      query.$and = andConditions;
+    }
+
+    console.log('[Users][filters]', filters);
+    console.log('[Users][query]', query);
 
     const safePage = Math.max(parseInt(page, 10) || 1, 1);
     const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
@@ -49,6 +94,8 @@ router.get('/', async (req, res) => {
       .skip((safePage - 1) * safeLimit);
     
     const total = await User.countDocuments(query);
+
+    console.log('[Users][response]', { count: users.length, total });
     
     res.json({ 
       success: true, 

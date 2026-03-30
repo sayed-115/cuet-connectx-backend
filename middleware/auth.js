@@ -20,6 +20,18 @@ const auth = async (req, res, next) => {
         return res.status(401).json({ success: false, message: 'User not found' });
       }
 
+      // Reject tokens issued before the last password change
+      if (user.passwordChangedAt) {
+        const changedAtSec = Math.floor(user.passwordChangedAt.getTime() / 1000);
+        if (decoded.iat < changedAtSec) {
+          return res.status(401).json({
+            success: false,
+            message: 'Password recently changed. Please log in again.',
+            expired: true,
+          });
+        }
+      }
+
       if (!user.isActive || user.status === 'banned') {
         return res.status(403).json({ success: false, message: 'Account is deactivated' });
       }

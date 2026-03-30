@@ -397,7 +397,15 @@ exports.updateJob = async (req, res) => {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
     }
 
-    const updatedJob = await Job.findByIdAndUpdate(id, updates, { new: true })
+    // Sanitize string fields
+    for (const key of ['title', 'company', 'location', 'description', 'applyLink', 'jobImage']) {
+      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, key === 'description' ? 5000 : 500);
+    }
+    if (updates.type && !['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(updates.type)) {
+      delete updates.type;
+    }
+
+    const updatedJob = await Job.findByIdAndUpdate(id, updates, { new: true, runValidators: true })
       .populate('postedBy', 'fullName studentId profileImage');
     return sendSuccess(res, 'Job updated successfully', { job: updatedJob });
   } catch (error) {
@@ -499,7 +507,12 @@ exports.updateScholarship = async (req, res) => {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
     }
 
-    const updatedScholarship = await Scholarship.findByIdAndUpdate(id, updates, { new: true })
+    // Sanitize string fields
+    for (const key of ['title', 'organization', 'amount', 'eligibility', 'description', 'link', 'scholarshipImage']) {
+      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, key === 'description' ? 5000 : key === 'eligibility' ? 1000 : 500);
+    }
+
+    const updatedScholarship = await Scholarship.findByIdAndUpdate(id, updates, { new: true, runValidators: true })
       .populate('postedBy', 'fullName studentId');
     return sendSuccess(res, 'Scholarship updated successfully', { scholarship: updatedScholarship });
   } catch (error) {

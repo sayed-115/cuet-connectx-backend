@@ -22,19 +22,22 @@ router.get('/', async (req, res) => {
   try {
     const { limit = 20, page = 1 } = req.query;
     
+    const safePage = Math.max(parseInt(page, 10) || 1, 1);
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+
     const posts = await Post.find()
       .populate('author', 'fullName studentId profileImage departmentShort batch')
       .populate('comments.user', 'fullName studentId profileImage')
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit));
+      .limit(safeLimit)
+      .skip((safePage - 1) * safeLimit);
     
     const total = await Post.countDocuments();
     
     res.json({ 
       success: true, 
       posts,
-      pagination: { page: parseInt(page), limit: parseInt(limit), total }
+      pagination: { page: safePage, limit: safeLimit, total }
     });
   } catch (error) {
     console.error('Get posts error:', error);

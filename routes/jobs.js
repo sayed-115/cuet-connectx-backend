@@ -1,37 +1,102 @@
 const express = require('express');
 const router = express.Router();
 const Job = require('../models/Job');
+const User = require('../models/User');
 const { auth } = require('../middleware/auth');
+
+const normalize = (value) => String(value || '').toLowerCase().trim();
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Get all jobs (public)
 router.get('/', async (req, res) => {
   try {
-    const { type, location, search, limit = 20, page = 1 } = req.query;
-    const query = {};
-    
-    if (type) query.type = type;
-    const escapeRx = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (location) query.location = { $regex: escapeRx(location), $options: 'i' };
-    if (search) {
-      const escaped = escapeRx(search);
+    const {
+      type,
+      location,
+      search,
+      experience,
+      role,
+      limit = 20,
+      page = 1,
+    } = req.query;
+
+    const filters = {
+      search: normalize(search),
+      type: normalize(type),
+      location: normalize(location),
+      experience: normalize(experience),
+      role: normalize(role),
+    };
+
+    const query = { isActive: true };
+
+    if (filters.type) {
+      query.type = { $regex: `^${escapeRegex(filters.type)}$`, $options: 'i' };
+    }
+
+    if (filters.location) {
+      query.location = { $regex: escapeRegex(filters.location), $options: 'i' };
+    }
+
+    if (filters.experience) {
+      query.experience = { $regex: escapeRegex(filters.experience), $options: 'i' };
+    }
+
+    if (filters.search) {
+      const searchRegex = { $regex: escapeRegex(filters.search), $options: 'i' };
       query.$or = [
-        { title: { $regex: escaped, $options: 'i' } },
-        { company: { $regex: escaped, $options: 'i' } }
+        { title: searchRegex },
+        { company: searchRegex },
+        { location: searchRegex },
+        { description: searchRegex },
+        { skills: searchRegex },
       ];
     }
 
+    if (filters.role) {
+      const roleRegex = { $regex: `^${escapeRegex(filters.role)}$`, $options: 'i' };
+      const matchingUsers = await User.find({
+        $or: [
+          { role: roleRegex },
+          { userType: roleRegex },
+        ],
+      }).select('_id');
+
+      const userIds = matchingUsers.map((u) => u._id);
+      if (userIds.length === 0) {
+        console.log('[Jobs][filters]', filters);
+        console.log('[Jobs][query]', query);
+        console.log('[Jobs][response]', { count: 0, total: 0 });
+        return res.json({
+          success: true,
+          jobs: [],
+          pagination: { page: Math.max(parseInt(page, 10) || 1, 1), limit: Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100), total: 0 },
+        });
+      }
+
+      query.postedBy = { $in: userIds };
+    }
+
+    console.log('[Jobs][filters]', filters);
+    console.log('[Jobs][query]', query);
+
+    const safePage = Math.max(parseInt(page, 10) || 1, 1);
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+
     const jobs = await Job.find(query)
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit))
-      .populate('postedBy', 'fullName studentId profileImage');
+      .limit(safeLimit)
+      .skip((safePage - 1) * safeLimit)
+      .populate('postedBy', 'fullName studentId profileImage role userType');
     
     const total = await Job.countDocuments(query);
+
+    console.log('[Jobs][response]', { count: jobs.length, total });
     
     res.json({ 
       success: true, 
       jobs,
-      pagination: { page: parseInt(page), limit: parseInt(limit), total }
+      pagination: { page: safePage, limit: safeLimit, total }
     });
   } catch (error) {
     console.error('Get jobs error:', error);
@@ -109,7 +174,18 @@ router.put('/:id', auth, async (req, res) => {
       }
     }
 
-    const updatedJob = await Job.findByIdAndUpdate(req.params.id, updates, { new: true });
+    // Sanitize string fields
+    for (const key of ['title', 'company', 'location', 'description', 'applyLink']) {
+      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, key === 'description' ? 5000 : 200);
+    }
+    if (updates.type && !['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(updates.type)) {
+      delete updates.type;
+    }
+    if (updates.requirements && Array.isArray(updates.requirements)) {
+      updates.requirements = updates.requirements.slice(0, 20);
+    }
+
+    const updatedJob = await Job.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
     res.json({ success: true, job: updatedJob, message: 'Job updated successfully' });
   } catch (error) {
     console.error('Update job error:', error);

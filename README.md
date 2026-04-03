@@ -89,7 +89,7 @@ NODE_ENV=production
 
 # MongoDB
 MONGODB_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/cuet-connectx
-# Railway alternative:
+# Optional alias used by some hosting providers:
 # DATABASE_URL=mongodb+srv://<user>:<pass>@cluster.mongodb.net/cuet-connectx
 
 # JWT

@@ -18,7 +18,7 @@ const app = express();
 
 const asTrimmed = (value) => (value || '').trim();
 
-// Support both MONGODB_URI and DATABASE_URL (Railway-style naming)
+// Support both MONGODB_URI and DATABASE_URL naming used across platforms
 const DATABASE_URL = asTrimmed(process.env.MONGODB_URI) || asTrimmed(process.env.DATABASE_URL);
 if (DATABASE_URL) {
   process.env.MONGODB_URI = DATABASE_URL;

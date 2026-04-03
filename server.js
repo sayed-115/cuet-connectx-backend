@@ -127,15 +127,14 @@ app.use('/api/admin', adminRoutes);
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: 8,
+    version: 9,
     message: 'CUET ConnectX API is running!',
     config_status: {
       DATABASE_URL: DATABASE_URL ? '✓ set' : '✗ MISSING',
       JWT_SECRET: process.env.JWT_SECRET ? '✓ set' : '✗ MISSING',
-      EMAIL_USER: process.env.EMAIL_USER ? `✓ ${process.env.EMAIL_USER.trim()}` : '✗ MISSING',
-      SENDGRID_API_KEY: process.env.SENDGRID_API_KEY ? `✓ set (${process.env.SENDGRID_API_KEY.trim().substring(0, 5)}...)` : '✗ MISSING',
-      FRONTEND_URL: process.env.FRONTEND_URL ? `✓ ${process.env.FRONTEND_URL.trim()}` : '✗ MISSING (will default to localhost)',
-      CORS_ORIGIN: process.env.CORS_ORIGIN ? `✓ ${process.env.CORS_ORIGIN.trim()}` : '✗ MISSING',
+      EMAIL_CONFIG: process.env.EMAIL_USER && process.env.SENDGRID_API_KEY ? '✓ configured' : '✗ INCOMPLETE',
+      FRONTEND_URL: process.env.FRONTEND_URL ? '✓ set' : '✗ MISSING (will default to localhost)',
+      CORS_ORIGIN: process.env.CORS_ORIGIN ? '✓ set' : '✗ MISSING',
     }
   });
 });

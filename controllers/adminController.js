@@ -27,7 +27,13 @@ exports.getDashboardOverview = async (req, res) => {
       totalBannedUsers,
       totalAdmins,
       totalJobs,
+      pendingJobs,
+      approvedJobs,
+      rejectedJobs,
       totalScholarships,
+      pendingScholarships,
+      approvedScholarships,
+      rejectedScholarships,
       totalPosts,
       recentRegistrations
     ] = await Promise.all([
@@ -36,9 +42,15 @@ exports.getDashboardOverview = async (req, res) => {
       User.countDocuments({ role: 'student' }),
       User.countDocuments({ status: 'banned' }),
       User.countDocuments({ role: 'admin' }),
-      Post.countDocuments({ type: 'job' }),
-      Post.countDocuments({ type: 'scholarship' }),
-      Post.countDocuments({ type: { $in: ['job', 'scholarship'] } }),
+      Job.countDocuments({}),
+      Job.countDocuments({ status: 'pending' }),
+      Job.countDocuments({ status: 'approved' }),
+      Job.countDocuments({ status: 'rejected' }),
+      Scholarship.countDocuments({}),
+      Scholarship.countDocuments({ status: 'pending' }),
+      Scholarship.countDocuments({ status: 'approved' }),
+      Scholarship.countDocuments({ status: 'rejected' }),
+      Post.countDocuments({}),
       User.find({})
         .sort({ createdAt: -1 })
         .limit(5)
@@ -52,7 +64,13 @@ exports.getDashboardOverview = async (req, res) => {
       totalBannedUsers,
       totalAdmins,
       totalJobs,
+      pendingJobs,
+      approvedJobs,
+      rejectedJobs,
       totalScholarships,
+      pendingScholarships,
+      approvedScholarships,
+      rejectedScholarships,
       totalPosts,
       recentRegistrations
     });
@@ -306,9 +324,9 @@ exports.getStats = async (req, res) => {
   try {
     const [totalUsers, totalJobs, totalScholarships, totalPosts] = await Promise.all([
       User.countDocuments({}),
-      Post.countDocuments({ type: 'job' }),
-      Post.countDocuments({ type: 'scholarship' }),
-      Post.countDocuments({ type: { $in: ['job', 'scholarship'] } })
+      Job.countDocuments({}),
+      Scholarship.countDocuments({}),
+      Post.countDocuments({})
     ]);
 
     return sendSuccess(res, 'Stats fetched', { totalUsers, totalJobs, totalScholarships, totalPosts });

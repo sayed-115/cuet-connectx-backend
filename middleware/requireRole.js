@@ -1,18 +1,13 @@
-const requireRole = (...allowedRoles) => {
-  const normalizedAllowedRoles = allowedRoles.map((role) => String(role || '').toLowerCase().trim()).filter(Boolean);
-
-  return (req, res, next) => {
+module.exports = function requireRole(requiredRole) {
+  return function roleGuard(req, res, next) {
     if (!req.user) {
       return res.status(401).json({ success: false, message: 'Authentication required' });
     }
 
-    const userRole = String(req.user.role || '').toLowerCase().trim();
-    if (!normalizedAllowedRoles.includes(userRole)) {
-      return res.status(403).json({ success: false, message: 'Forbidden: insufficient role permission' });
+    if (req.user.role !== requiredRole) {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
     }
 
     return next();
   };
 };
-
-module.exports = requireRole;

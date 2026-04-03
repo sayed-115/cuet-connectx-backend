@@ -542,21 +542,15 @@ exports.getPosts = async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
-    const communityQuery = {
-      $or: [
-        { type: 'community' },
-        { type: { $exists: false } }
-      ]
-    };
 
     const [posts, total] = await Promise.all([
-      Post.find(communityQuery)
+      Post.find()
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .populate('author', 'fullName studentId profileImage departmentShort batch')
         .populate('comments.user', 'fullName studentId profileImage'),
-      Post.countDocuments(communityQuery)
+      Post.countDocuments()
     ]);
 
     return sendSuccess(res, 'Posts fetched', {
@@ -574,13 +568,7 @@ exports.deletePost = async (req, res) => {
     const { id } = req.params;
     if (!isValidObjectId(id)) return sendError(res, 'Invalid post id');
 
-    const post = await Post.findOne({
-      _id: id,
-      $or: [
-        { type: 'community' },
-        { type: { $exists: false } }
-      ]
-    });
+    const post = await Post.findById(id);
     if (!post) return sendError(res, 'Post not found', 404);
 
     await Post.findByIdAndDelete(id);

@@ -56,6 +56,21 @@ const jobSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  role: {
+    type: String,
+    enum: ['admin', 'user'],
+    default: 'user'
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'approved',
+    index: true
+  },
   jobImage: {
     type: String,
     default: null

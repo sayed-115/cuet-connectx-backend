@@ -3,6 +3,7 @@ const User = require('../models/User');
 const Job = require('../models/Job');
 const Post = require('../models/Post');
 const Scholarship = require('../models/Scholarship');
+const { normalizeJobPayload, normalizeScholarshipPayload } = require('../utils/contentNormalization');
 
 // ── Constants ──────────────────────────────────────────────
 const ALLOWED_ROLES = ['student', 'alumni', 'admin'];
@@ -355,28 +356,34 @@ exports.getJobs = async (req, res) => {
 
 exports.createJob = async (req, res) => {
   try {
-    const { title, company, location, type, description, requirements, salary, deadline, applyLink, jobImage } = req.body;
+    const normalized = normalizeJobPayload(req.body);
 
-    if (!title || !company || !description) {
+    if (!normalized.title || !normalized.company || !normalized.description) {
       return sendError(res, 'Title, company, and description are required');
     }
 
     const job = new Job({
-      title: title.trim().slice(0, 200),
-      company: company.trim().slice(0, 100),
-      location: location?.trim().slice(0, 100) || '',
-      type: ['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(type) ? type : 'Full-time',
-      description: description.trim().slice(0, 5000),
-      requirements: Array.isArray(requirements) ? requirements.slice(0, 20) : [],
-      salary: salary || {},
-      applicationDeadline: deadline ? new Date(deadline) : null,
-      applyLink: applyLink?.trim().slice(0, 500) || '',
-      jobImage: jobImage?.trim().slice(0, 500) || null,
-      postedBy: req.user._id
+      ...normalized,
+      location: normalized.location || '',
+      type: normalized.type || 'Full-time',
+      experience: normalized.experience || 'Entry Level',
+      salary: normalized.salary || {},
+      requirements: normalized.requirements || [],
+      responsibilities: normalized.responsibilities || [],
+      skills: normalized.skills || [],
+      applicationDeadline: normalized.applicationDeadline || null,
+      applyLink: normalized.applyLink || '',
+      applyEmail: normalized.applyEmail || '',
+      jobImage: normalized.jobImage || null,
+      postedBy: req.user._id,
+      createdBy: req.user._id,
+      role: 'admin',
+      status: 'approved'
     });
 
     await job.save();
-    return sendSuccess(res, 'Job created successfully', { job }, 201);
+    const populated = await Job.findById(job._id).populate('postedBy', 'fullName studentId profileImage role userType');
+    return sendSuccess(res, 'Job created successfully', { job: populated }, 201);
   } catch (error) {
     console.error('Admin create job error:', error);
     return sendError(res, 'Server error', 500);
@@ -391,22 +398,51 @@ exports.updateJob = async (req, res) => {
     const job = await Job.findById(id);
     if (!job) return sendError(res, 'Job not found', 404);
 
-    const allowedFields = ['title', 'company', 'location', 'type', 'description', 'requirements', 'salary', 'applicationDeadline', 'applyLink', 'isActive', 'jobImage'];
+    const normalized = normalizeJobPayload(req.body);
+
+    const allowedFields = [
+      'title',
+      'company',
+      'location',
+      'type',
+      'description',
+      'requirements',
+      'responsibilities',
+      'skills',
+      'salary',
+      'applicationDeadline',
+      'applyLink',
+      'applyEmail',
+      'experience',
+      'isActive',
+      'jobImage',
+      'status',
+    ];
     const updates = {};
     for (const field of allowedFields) {
-      if (req.body[field] !== undefined) updates[field] = req.body[field];
+      if (field === 'isActive') {
+        if (req.body.isActive !== undefined) updates.isActive = Boolean(req.body.isActive);
+        continue;
+      }
+
+      if (field === 'status') {
+        if (['pending', 'approved', 'rejected'].includes(String(req.body.status || '').toLowerCase())) {
+          updates.status = String(req.body.status).toLowerCase();
+        }
+        continue;
+      }
+
+      if (normalized[field] !== undefined) {
+        updates[field] = normalized[field];
+      }
     }
 
-    // Sanitize string fields
-    for (const key of ['title', 'company', 'location', 'description', 'applyLink', 'jobImage']) {
-      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, key === 'description' ? 5000 : 500);
-    }
-    if (updates.type && !['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(updates.type)) {
-      delete updates.type;
+    if (!job.createdBy) {
+      updates.createdBy = job.postedBy;
     }
 
     const updatedJob = await Job.findByIdAndUpdate(id, updates, { new: true, runValidators: true })
-      .populate('postedBy', 'fullName studentId profileImage');
+      .populate('postedBy', 'fullName studentId profileImage role userType');
     return sendSuccess(res, 'Job updated successfully', { job: updatedJob });
   } catch (error) {
     console.error('Admin update job error:', error);
@@ -467,26 +503,29 @@ exports.getScholarships = async (req, res) => {
 
 exports.createScholarship = async (req, res) => {
   try {
-    const { title, organization, amount, eligibility, description, deadline, link, scholarshipImage } = req.body;
+    const normalized = normalizeScholarshipPayload(req.body);
 
-    if (!title || !organization) {
+    if (!normalized.title || !normalized.organization) {
       return sendError(res, 'Title and organization are required');
     }
 
     const scholarship = new Scholarship({
-      title: title.trim().slice(0, 200),
-      organization: organization.trim().slice(0, 100),
-      amount: amount?.trim().slice(0, 50) || '',
-      eligibility: eligibility?.trim().slice(0, 1000) || '',
-      description: description?.trim().slice(0, 5000) || '',
-      deadline: deadline ? new Date(deadline) : null,
-      link: link?.trim().slice(0, 500) || '',
-      scholarshipImage: scholarshipImage?.trim().slice(0, 500) || null,
-      postedBy: req.user._id
+      ...normalized,
+      amount: normalized.amount || '',
+      eligibility: normalized.eligibility || '',
+      description: normalized.description || normalized.title,
+      deadline: normalized.deadline || null,
+      link: normalized.link || '',
+      scholarshipImage: normalized.scholarshipImage || null,
+      postedBy: req.user._id,
+      createdBy: req.user._id,
+      role: 'admin',
+      status: 'approved'
     });
 
     await scholarship.save();
-    return sendSuccess(res, 'Scholarship created successfully', { scholarship }, 201);
+    const populated = await Scholarship.findById(scholarship._id).populate('postedBy', 'fullName studentId profileImage role userType');
+    return sendSuccess(res, 'Scholarship created successfully', { scholarship: populated }, 201);
   } catch (error) {
     console.error('Admin create scholarship error:', error);
     return sendError(res, 'Server error', 500);
@@ -501,19 +540,44 @@ exports.updateScholarship = async (req, res) => {
     const scholarship = await Scholarship.findById(id);
     if (!scholarship) return sendError(res, 'Scholarship not found', 404);
 
-    const allowedFields = ['title', 'organization', 'amount', 'eligibility', 'description', 'deadline', 'link', 'scholarshipImage'];
+    const normalized = normalizeScholarshipPayload(req.body);
+
+    const allowedFields = [
+      'title',
+      'organization',
+      'amount',
+      'eligibility',
+      'description',
+      'deadline',
+      'link',
+      'scholarshipImage',
+      'level',
+      'location',
+      'fundingType',
+      'duration',
+      'benefits',
+      'status',
+    ];
     const updates = {};
     for (const field of allowedFields) {
-      if (req.body[field] !== undefined) updates[field] = req.body[field];
+      if (field === 'status') {
+        if (['pending', 'approved', 'rejected'].includes(String(req.body.status || '').toLowerCase())) {
+          updates.status = String(req.body.status).toLowerCase();
+        }
+        continue;
+      }
+
+      if (normalized[field] !== undefined) {
+        updates[field] = normalized[field];
+      }
     }
 
-    // Sanitize string fields
-    for (const key of ['title', 'organization', 'amount', 'eligibility', 'description', 'link', 'scholarshipImage']) {
-      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, key === 'description' ? 5000 : key === 'eligibility' ? 1000 : 500);
+    if (!scholarship.createdBy) {
+      updates.createdBy = scholarship.postedBy;
     }
 
     const updatedScholarship = await Scholarship.findByIdAndUpdate(id, updates, { new: true, runValidators: true })
-      .populate('postedBy', 'fullName studentId');
+      .populate('postedBy', 'fullName studentId profileImage role userType');
     return sendSuccess(res, 'Scholarship updated successfully', { scholarship: updatedScholarship });
   } catch (error) {
     console.error('Admin update scholarship error:', error);

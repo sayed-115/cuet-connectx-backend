@@ -93,15 +93,48 @@ if (!DATABASE_URL) {
 mongoose.connect(DATABASE_URL)
   .then(async () => {
     console.log('✅ Connected to MongoDB');
-    // One-time migration: mark pre-existing users (registered before email verification feature) as verified
+    // One-time migrations: keep legacy data compatible with current runtime contracts
     try {
       const User = require('./models/User');
+      const Job = require('./models/Job');
+      const Scholarship = require('./models/Scholarship');
+
       const result = await User.updateMany(
         { emailVerified: { $ne: true }, emailVerificationToken: { $exists: false } },
         { $set: { emailVerified: true } }
       );
       if (result.modifiedCount > 0) {
         console.log(`✅ Migration: marked ${result.modifiedCount} existing user(s) as email-verified`);
+      }
+
+      const [
+        jobStatusResult,
+        jobRoleResult,
+        jobCreatedByResult,
+        scholarshipStatusResult,
+        scholarshipRoleResult,
+        scholarshipCreatedByResult,
+      ] = await Promise.all([
+        Job.updateMany({ status: { $exists: false } }, { $set: { status: 'approved' } }),
+        Job.updateMany({ role: { $exists: false } }, { $set: { role: 'user' } }),
+        Job.updateMany(
+          { createdBy: { $exists: false }, postedBy: { $exists: true } },
+          [{ $set: { createdBy: '$postedBy' } }]
+        ),
+        Scholarship.updateMany({ status: { $exists: false } }, { $set: { status: 'approved' } }),
+        Scholarship.updateMany({ role: { $exists: false } }, { $set: { role: 'user' } }),
+        Scholarship.updateMany(
+          { createdBy: { $exists: false }, postedBy: { $exists: true } },
+          [{ $set: { createdBy: '$postedBy' } }]
+        ),
+      ]);
+
+      if (jobStatusResult.modifiedCount > 0 || jobRoleResult.modifiedCount > 0 || jobCreatedByResult.modifiedCount > 0) {
+        console.log(`[Migration][Job] status:${jobStatusResult.modifiedCount}, role:${jobRoleResult.modifiedCount}, createdBy:${jobCreatedByResult.modifiedCount}`);
+      }
+
+      if (scholarshipStatusResult.modifiedCount > 0 || scholarshipRoleResult.modifiedCount > 0 || scholarshipCreatedByResult.modifiedCount > 0) {
+        console.log(`[Migration][Scholarship] status:${scholarshipStatusResult.modifiedCount}, role:${scholarshipRoleResult.modifiedCount}, createdBy:${scholarshipCreatedByResult.modifiedCount}`);
       }
     } catch (migrationErr) {
       console.error('Migration warning:', migrationErr.message);
@@ -128,7 +161,7 @@ app.use('/api/admin', adminRoutes);
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: 10,
+    version: 11,
     message: 'CUET ConnectX API is running!',
     config_status: {
       DATABASE_URL: DATABASE_URL ? '✓ set' : '✗ MISSING',

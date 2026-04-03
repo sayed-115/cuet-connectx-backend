@@ -36,9 +36,9 @@ exports.getDashboardOverview = async (req, res) => {
       User.countDocuments({ role: 'student' }),
       User.countDocuments({ status: 'banned' }),
       User.countDocuments({ role: 'admin' }),
-      Job.countDocuments({}),
-      Scholarship.countDocuments({}),
-      Post.countDocuments({}),
+      Post.countDocuments({ type: 'job' }),
+      Post.countDocuments({ type: 'scholarship' }),
+      Post.countDocuments({ type: { $in: ['job', 'scholarship'] } }),
       User.find({})
         .sort({ createdAt: -1 })
         .limit(5)
@@ -306,9 +306,9 @@ exports.getStats = async (req, res) => {
   try {
     const [totalUsers, totalJobs, totalScholarships, totalPosts] = await Promise.all([
       User.countDocuments({}),
-      Job.countDocuments({}),
-      Scholarship.countDocuments({}),
-      Post.countDocuments({})
+      Post.countDocuments({ type: 'job' }),
+      Post.countDocuments({ type: 'scholarship' }),
+      Post.countDocuments({ type: { $in: ['job', 'scholarship'] } })
     ]);
 
     return sendSuccess(res, 'Stats fetched', { totalUsers, totalJobs, totalScholarships, totalPosts });
@@ -542,15 +542,21 @@ exports.getPosts = async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
+    const communityQuery = {
+      $or: [
+        { type: 'community' },
+        { type: { $exists: false } }
+      ]
+    };
 
     const [posts, total] = await Promise.all([
-      Post.find()
+      Post.find(communityQuery)
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .populate('author', 'fullName studentId profileImage departmentShort batch')
         .populate('comments.user', 'fullName studentId profileImage'),
-      Post.countDocuments()
+      Post.countDocuments(communityQuery)
     ]);
 
     return sendSuccess(res, 'Posts fetched', {
@@ -568,7 +574,13 @@ exports.deletePost = async (req, res) => {
     const { id } = req.params;
     if (!isValidObjectId(id)) return sendError(res, 'Invalid post id');
 
-    const post = await Post.findById(id);
+    const post = await Post.findOne({
+      _id: id,
+      $or: [
+        { type: 'community' },
+        { type: { $exists: false } }
+      ]
+    });
     if (!post) return sendError(res, 'Post not found', 404);
 
     await Post.findByIdAndDelete(id);

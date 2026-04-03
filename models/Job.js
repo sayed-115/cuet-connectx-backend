@@ -56,21 +56,6 @@ const jobSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
-  createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    default: null
-  },
-  role: {
-    type: String,
-    enum: ['admin', 'user'],
-    default: 'user'
-  },
-  status: {
-    type: String,
-    enum: ['pending', 'approved', 'rejected'],
-    default: 'pending'
-  },
   jobImage: {
     type: String,
     default: null
@@ -94,13 +79,5 @@ const jobSchema = new mongoose.Schema({
 
 // Index for search
 jobSchema.index({ title: 'text', company: 'text', description: 'text', skills: 'text' });
-jobSchema.index({ status: 1, createdAt: -1 });
-
-jobSchema.pre('validate', function syncCreatedBy(next) {
-  if (!this.createdBy && this.postedBy) {
-    this.createdBy = this.postedBy;
-  }
-  next();
-});
 
 module.exports = mongoose.model('Job', jobSchema);

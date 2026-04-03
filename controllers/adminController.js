@@ -27,13 +27,7 @@ exports.getDashboardOverview = async (req, res) => {
       totalBannedUsers,
       totalAdmins,
       totalJobs,
-      pendingJobs,
-      approvedJobs,
-      rejectedJobs,
       totalScholarships,
-      pendingScholarships,
-      approvedScholarships,
-      rejectedScholarships,
       totalPosts,
       recentRegistrations
     ] = await Promise.all([
@@ -43,13 +37,7 @@ exports.getDashboardOverview = async (req, res) => {
       User.countDocuments({ status: 'banned' }),
       User.countDocuments({ role: 'admin' }),
       Job.countDocuments({}),
-      Job.countDocuments({ status: 'pending' }),
-      Job.countDocuments({ status: 'approved' }),
-      Job.countDocuments({ status: 'rejected' }),
       Scholarship.countDocuments({}),
-      Scholarship.countDocuments({ status: 'pending' }),
-      Scholarship.countDocuments({ status: 'approved' }),
-      Scholarship.countDocuments({ status: 'rejected' }),
       Post.countDocuments({}),
       User.find({})
         .sort({ createdAt: -1 })
@@ -64,13 +52,7 @@ exports.getDashboardOverview = async (req, res) => {
       totalBannedUsers,
       totalAdmins,
       totalJobs,
-      pendingJobs,
-      approvedJobs,
-      rejectedJobs,
       totalScholarships,
-      pendingScholarships,
-      approvedScholarships,
-      rejectedScholarships,
       totalPosts,
       recentRegistrations
     });

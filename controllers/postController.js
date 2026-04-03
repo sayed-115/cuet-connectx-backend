@@ -2,7 +2,6 @@ const mongoose = require('mongoose');
 const Post = require('../models/Post');
 
 const ALLOWED_POST_TYPES = ['job', 'scholarship'];
-const ALLOWED_STATUS = ['approved', 'pending', 'rejected'];
 
 const asTrimmed = (value) => String(value || '').trim();
 const normalize = (value) => asTrimmed(value).toLowerCase();
@@ -13,8 +12,6 @@ const populateCreatedBy = {
   path: 'createdBy',
   select: 'fullName studentId profileImage departmentShort batch role userType',
 };
-
-const isAdminUser = (user) => String(user?.role || '').toLowerCase() === 'admin';
 
 const sanitizeDeadline = (deadlineValue) => {
   if (deadlineValue === undefined) return undefined;
@@ -32,9 +29,6 @@ exports.getPosts = async (req, res) => {
     const search = normalize(req.query.search);
     const providerName = normalize(req.query.providerName || req.query.provider);
     const type = normalize(req.query.type);
-    const status = normalize(req.query.status);
-    const includeAll = String(req.query.includeAll || '').toLowerCase() === 'true';
-    const canViewAll = includeAll && isAdminUser(req.user);
 
     const query = {
       type: { $in: ALLOWED_POST_TYPES },
@@ -52,21 +46,6 @@ exports.getPosts = async (req, res) => {
 
     if (providerName) {
       query.providerName = { $regex: escapeRegex(providerName), $options: 'i' };
-    }
-
-    if (canViewAll) {
-      if (status) {
-        if (!ALLOWED_STATUS.includes(status)) {
-          return res.status(400).json({
-            success: false,
-            message: `Invalid status filter. Allowed values: ${ALLOWED_STATUS.join(', ')}`,
-          });
-        }
-        query.status = status;
-      }
-    } else {
-      // Public feed always shows only approved posts.
-      query.status = 'approved';
     }
 
     if (search) {
@@ -96,13 +75,6 @@ exports.getPosts = async (req, res) => {
         total,
         pages: Math.max(Math.ceil(total / limit), 1),
       },
-      groupedByStatus: canViewAll
-        ? {
-          pending: posts.filter((post) => post.status === 'pending'),
-          approved: posts.filter((post) => post.status === 'approved'),
-          rejected: posts.filter((post) => post.status === 'rejected'),
-        }
-        : undefined,
     });
   } catch (error) {
     console.error('Get posts error:', error);
@@ -113,22 +85,14 @@ exports.getPosts = async (req, res) => {
 exports.getPostById = async (req, res) => {
   try {
     const { id } = req.params;
-    const includeAll = String(req.query.includeAll || '').toLowerCase() === 'true';
-    const canViewAll = includeAll && isAdminUser(req.user);
     if (!isValidObjectId(id)) {
       return res.status(400).json({ success: false, message: 'Invalid post id' });
     }
 
-    const query = {
+    const post = await Post.findOne({
       _id: id,
       type: { $in: ALLOWED_POST_TYPES },
-    };
-
-    if (!canViewAll) {
-      query.status = 'approved';
-    }
-
-    const post = await Post.findOne(query).populate(populateCreatedBy);
+    }).populate(populateCreatedBy);
 
     if (!post) {
       return res.status(404).json({ success: false, message: 'Post not found' });
@@ -162,8 +126,6 @@ exports.createPost = async (req, res) => {
       });
     }
 
-    const postingAsAdmin = isAdminUser(req.user);
-
     const parsedDeadline = sanitizeDeadline(req.body.deadline);
     if (parsedDeadline === 'invalid') {
       return res.status(400).json({ success: false, message: 'Invalid deadline date' });
@@ -176,8 +138,6 @@ exports.createPost = async (req, res) => {
       providerName: providerName.slice(0, 200),
       deadline: parsedDeadline === undefined ? null : parsedDeadline,
       createdBy: req.user._id,
-      role: postingAsAdmin ? 'admin' : 'user',
-      status: postingAsAdmin ? 'approved' : 'pending',
     });
 
     await post.save();
@@ -206,8 +166,7 @@ exports.updatePost = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Post not found' });
     }
 
-    const postingAsAdmin = isAdminUser(req.user);
-    if (!postingAsAdmin && String(post.createdBy) !== String(req.user._id)) {
+    if (String(post.createdBy) !== String(req.user._id)) {
       return res.status(403).json({ success: false, message: 'Not authorized to update this post' });
     }
 
@@ -248,11 +207,6 @@ exports.updatePost = async (req, res) => {
       post.deadline = parsedDeadline;
     }
 
-    // Preserve ownership metadata for user-originated posts unless admin explicitly created it.
-    if (postingAsAdmin && post.role !== 'admin') {
-      post.role = post.role || 'user';
-    }
-
     await post.save();
     await post.populate(populateCreatedBy);
 
@@ -279,8 +233,7 @@ exports.deletePost = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Post not found' });
     }
 
-    const postingAsAdmin = isAdminUser(req.user);
-    if (!postingAsAdmin && String(post.createdBy) !== String(req.user._id)) {
+    if (String(post.createdBy) !== String(req.user._id)) {
       return res.status(403).json({ success: false, message: 'Not authorized to delete this post' });
     }
 
@@ -292,52 +245,6 @@ exports.deletePost = async (req, res) => {
     });
   } catch (error) {
     console.error('Delete post error:', error);
-    return res.status(500).json({ success: false, message: 'Server error' });
-  }
-};
-
-exports.approvePost = async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (!isValidObjectId(id)) {
-      return res.status(400).json({ success: false, message: 'Invalid post id' });
-    }
-
-    const post = await Post.findOne({ _id: id, type: { $in: ALLOWED_POST_TYPES } });
-    if (!post) {
-      return res.status(404).json({ success: false, message: 'Post not found' });
-    }
-
-    post.status = 'approved';
-    await post.save();
-    await post.populate(populateCreatedBy);
-
-    return res.json({ success: true, post, message: 'Post approved successfully' });
-  } catch (error) {
-    console.error('Approve post error:', error);
-    return res.status(500).json({ success: false, message: 'Server error' });
-  }
-};
-
-exports.rejectPost = async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (!isValidObjectId(id)) {
-      return res.status(400).json({ success: false, message: 'Invalid post id' });
-    }
-
-    const post = await Post.findOne({ _id: id, type: { $in: ALLOWED_POST_TYPES } });
-    if (!post) {
-      return res.status(404).json({ success: false, message: 'Post not found' });
-    }
-
-    post.status = 'rejected';
-    await post.save();
-    await post.populate(populateCreatedBy);
-
-    return res.json({ success: true, post, message: 'Post rejected successfully' });
-  } catch (error) {
-    console.error('Reject post error:', error);
     return res.status(500).json({ success: false, message: 'Server error' });
   }
 };

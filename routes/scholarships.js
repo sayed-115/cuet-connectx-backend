@@ -1,126 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const { auth } = require('../middleware/auth');
-const isAdmin = require('../middleware/isAdmin');
 const Scholarship = require('../models/Scholarship');
 const User = require('../models/User');
 
 const normalize = (value) => String(value || '').toLowerCase().trim();
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const ALLOWED_POST_STATUSES = ['pending', 'approved', 'rejected'];
-
-const safePageValue = (page) => Math.max(parseInt(page, 10) || 1, 1);
-const safeLimitValue = (limit) => Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
-
-const applyScholarshipFilters = async (filters, andConditions) => {
-  if (filters.search) {
-    const rx = { $regex: escapeRegex(filters.search), $options: 'i' };
-    andConditions.push({
-      $or: [
-        { title: rx },
-        { organization: rx },
-        { description: rx },
-        { eligibility: rx },
-        { amount: rx },
-      ],
-    });
-  }
-
-  if (filters.type) {
-    if (filters.type === 'full') {
-      andConditions.push({
-        $or: [
-          { amount: { $regex: 'full|fully funded', $options: 'i' } },
-          { description: { $regex: 'full|fully funded', $options: 'i' } },
-        ],
-      });
-    } else if (filters.type === 'partial') {
-      andConditions.push({
-        $or: [
-          { amount: { $regex: 'partial', $options: 'i' } },
-          { description: { $regex: 'partial', $options: 'i' } },
-        ],
-      });
-    } else if (filters.type === 'tuition only') {
-      andConditions.push({
-        $or: [
-          { amount: { $regex: 'tuition', $options: 'i' } },
-          { description: { $regex: 'tuition', $options: 'i' } },
-        ],
-      });
-    } else if (filters.type === 'stipend') {
-      andConditions.push({
-        $or: [
-          { amount: { $regex: 'stipend', $options: 'i' } },
-          { description: { $regex: 'stipend', $options: 'i' } },
-        ],
-      });
-    } else {
-      const rx = { $regex: escapeRegex(filters.type), $options: 'i' };
-      andConditions.push({
-        $or: [
-          { amount: rx },
-          { description: rx },
-        ],
-      });
-    }
-  }
-
-  if (filters.location) {
-    const rx = { $regex: escapeRegex(filters.location), $options: 'i' };
-    andConditions.push({
-      $or: [
-        { description: rx },
-        { eligibility: rx },
-        { organization: rx },
-        { title: rx },
-      ],
-    });
-  }
-
-  if (filters.experience) {
-    let levelPattern = '';
-    if (filters.experience === 'undergraduate') {
-      levelPattern = 'undergraduate|bachelor|bsc|bs|honours|honors';
-    } else if (filters.experience === "master's" || filters.experience === 'masters') {
-      levelPattern = 'master|msc|ms';
-    } else if (filters.experience === 'phd') {
-      levelPattern = 'phd|doctorate|doctoral';
-    } else if (filters.experience === 'postdoc') {
-      levelPattern = 'postdoc|post-doc';
-    } else {
-      levelPattern = escapeRegex(filters.experience);
-    }
-
-    andConditions.push({
-      $or: [
-        { title: { $regex: levelPattern, $options: 'i' } },
-        { description: { $regex: levelPattern, $options: 'i' } },
-        { eligibility: { $regex: levelPattern, $options: 'i' } },
-      ],
-    });
-  }
-
-  if (filters.role) {
-    const roleRegex = { $regex: `^${escapeRegex(filters.role)}$`, $options: 'i' };
-    const matchingUsers = await User.find({
-      $or: [
-        { role: roleRegex },
-        { userType: roleRegex },
-      ],
-    }).select('_id');
-
-    const userIds = matchingUsers.map((u) => u._id);
-    if (userIds.length === 0) {
-      return { noUserMatch: true };
-    }
-
-    andConditions.push({ postedBy: { $in: userIds } });
-  }
-
-  return { noUserMatch: false };
-};
 
 // Get all scholarships (public)
 router.get('/', async (req, res) => {
@@ -143,16 +28,119 @@ router.get('/', async (req, res) => {
       role: normalize(role),
     };
 
-    const query = { status: 'approved' };
+    const query = {};
     const andConditions = [];
 
-    const filterOutcome = await applyScholarshipFilters(filters, andConditions);
-    if (filterOutcome.noUserMatch) {
-      return res.json({
-        success: true,
-        scholarships: [],
-        pagination: { page: safePageValue(page), limit: safeLimitValue(limit), total: 0 },
+    if (filters.search) {
+      const rx = { $regex: escapeRegex(filters.search), $options: 'i' };
+      andConditions.push({
+        $or: [
+          { title: rx },
+          { organization: rx },
+          { description: rx },
+          { eligibility: rx },
+          { amount: rx },
+        ],
       });
+    }
+
+    if (filters.type) {
+      if (filters.type === 'full') {
+        andConditions.push({
+          $or: [
+            { amount: { $regex: 'full|fully funded', $options: 'i' } },
+            { description: { $regex: 'full|fully funded', $options: 'i' } },
+          ],
+        });
+      } else if (filters.type === 'partial') {
+        andConditions.push({
+          $or: [
+            { amount: { $regex: 'partial', $options: 'i' } },
+            { description: { $regex: 'partial', $options: 'i' } },
+          ],
+        });
+      } else if (filters.type === 'tuition only') {
+        andConditions.push({
+          $or: [
+            { amount: { $regex: 'tuition', $options: 'i' } },
+            { description: { $regex: 'tuition', $options: 'i' } },
+          ],
+        });
+      } else if (filters.type === 'stipend') {
+        andConditions.push({
+          $or: [
+            { amount: { $regex: 'stipend', $options: 'i' } },
+            { description: { $regex: 'stipend', $options: 'i' } },
+          ],
+        });
+      } else {
+        const rx = { $regex: escapeRegex(filters.type), $options: 'i' };
+        andConditions.push({
+          $or: [
+            { amount: rx },
+            { description: rx },
+          ],
+        });
+      }
+    }
+
+    if (filters.location) {
+      const rx = { $regex: escapeRegex(filters.location), $options: 'i' };
+      andConditions.push({
+        $or: [
+          { description: rx },
+          { eligibility: rx },
+          { organization: rx },
+          { title: rx },
+        ],
+      });
+    }
+
+    if (filters.experience) {
+      let levelPattern = '';
+      if (filters.experience === 'undergraduate') {
+        levelPattern = 'undergraduate|bachelor|bsc|bs|honours|honors';
+      } else if (filters.experience === "master's" || filters.experience === 'masters') {
+        levelPattern = "master|msc|ms";
+      } else if (filters.experience === 'phd') {
+        levelPattern = 'phd|doctorate|doctoral';
+      } else if (filters.experience === 'postdoc') {
+        levelPattern = 'postdoc|post-doc';
+      } else {
+        levelPattern = escapeRegex(filters.experience);
+      }
+
+      andConditions.push({
+        $or: [
+          { title: { $regex: levelPattern, $options: 'i' } },
+          { description: { $regex: levelPattern, $options: 'i' } },
+          { eligibility: { $regex: levelPattern, $options: 'i' } },
+        ],
+      });
+    }
+
+    if (filters.role) {
+      const roleRegex = { $regex: `^${escapeRegex(filters.role)}$`, $options: 'i' };
+      const matchingUsers = await User.find({
+        $or: [
+          { role: roleRegex },
+          { userType: roleRegex },
+        ],
+      }).select('_id');
+
+      const userIds = matchingUsers.map((u) => u._id);
+      if (userIds.length === 0) {
+        console.log('[Scholarships][filters]', filters);
+        console.log('[Scholarships][query]', query);
+        console.log('[Scholarships][response]', { count: 0, total: 0 });
+        return res.json({
+          success: true,
+          scholarships: [],
+          pagination: { page: Math.max(parseInt(page, 10) || 1, 1), limit: Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100), total: 0 },
+        });
+      }
+
+      andConditions.push({ postedBy: { $in: userIds } });
     }
 
     if (andConditions.length > 0) {
@@ -162,8 +150,8 @@ router.get('/', async (req, res) => {
     console.log('[Scholarships][filters]', filters);
     console.log('[Scholarships][query]', query);
 
-    const safePage = safePageValue(page);
-    const safeLimit = safeLimitValue(limit);
+    const safePage = Math.max(parseInt(page, 10) || 1, 1);
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
     const scholarships = await Scholarship.find(query)
       .populate('postedBy', 'fullName studentId')
@@ -182,75 +170,6 @@ router.get('/', async (req, res) => {
     });
   } catch (error) {
     console.error('Get scholarships error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// Get all scholarships for admin (includes pending/approved/rejected)
-router.get('/all', auth, isAdmin, async (req, res) => {
-  try {
-    const {
-      limit = 20,
-      page = 1,
-      search,
-      type,
-      location,
-      experience,
-      role,
-      status,
-    } = req.query;
-
-    const filters = {
-      search: normalize(search),
-      type: normalize(type),
-      location: normalize(location),
-      experience: normalize(experience),
-      role: normalize(role),
-      status: normalize(status),
-    };
-
-    const query = {};
-    const andConditions = [];
-
-    if (filters.status) {
-      if (!ALLOWED_POST_STATUSES.includes(filters.status)) {
-        return res.status(400).json({ success: false, message: 'Invalid status filter' });
-      }
-      query.status = filters.status;
-    }
-
-    const filterOutcome = await applyScholarshipFilters(filters, andConditions);
-    if (filterOutcome.noUserMatch) {
-      return res.json({
-        success: true,
-        scholarships: [],
-        pagination: { page: safePageValue(page), limit: safeLimitValue(limit), total: 0 },
-      });
-    }
-
-    if (andConditions.length > 0) {
-      query.$and = andConditions;
-    }
-
-    const safePage = safePageValue(page);
-    const safeLimit = safeLimitValue(limit);
-
-    const scholarships = await Scholarship.find(query)
-      .populate('postedBy', 'fullName studentId')
-      .populate('createdBy', 'fullName studentId role userType')
-      .sort({ createdAt: -1 })
-      .limit(safeLimit)
-      .skip((safePage - 1) * safeLimit);
-
-    const total = await Scholarship.countDocuments(query);
-
-    res.json({
-      success: true,
-      scholarships,
-      pagination: { page: safePage, limit: safeLimit, total }
-    });
-  } catch (error) {
-    console.error('Get all scholarships (admin) error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
@@ -274,9 +193,6 @@ router.get('/:id', async (req, res) => {
 router.post('/', auth, async (req, res) => {
   try {
     const { title, organization, amount, eligibility, description, deadline, link } = req.body;
-
-    const postingRole = req.user.role === 'admin' ? 'admin' : 'user';
-    const postingStatus = req.user.role === 'admin' ? 'approved' : 'pending';
     
     if (!title || !organization) {
       return res.status(400).json({ success: false, message: 'Title and organization are required' });
@@ -290,10 +206,7 @@ router.post('/', auth, async (req, res) => {
       description: description?.trim().slice(0, 5000) || '',
       deadline: deadline ? new Date(deadline) : null,
       link: link?.trim().slice(0, 500) || '',
-      postedBy: req.user._id,
-      createdBy: req.user._id,
-      role: postingRole,
-      status: postingStatus,
+      postedBy: req.user._id
     });
 
     await scholarship.save();
@@ -313,11 +226,8 @@ router.put('/:id', auth, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Scholarship not found' });
     }
 
-    const ownerId = scholarship.createdBy || scholarship.postedBy;
-    const isOwner = ownerId && ownerId.toString() === req.user._id.toString();
-    const isAdminUser = req.user.role === 'admin';
-
-    if (!isAdminUser && !isOwner) {
+    // Check ownership
+    if (scholarship.postedBy?.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: 'Not authorized to update this scholarship' });
     }
 
@@ -343,44 +253,6 @@ router.put('/:id', auth, async (req, res) => {
   }
 });
 
-// Approve scholarship (admin only)
-router.put('/:id/approve', auth, isAdmin, async (req, res) => {
-  try {
-    const scholarship = await Scholarship.findById(req.params.id);
-
-    if (!scholarship) {
-      return res.status(404).json({ success: false, message: 'Scholarship not found' });
-    }
-
-    scholarship.status = 'approved';
-    await scholarship.save();
-
-    res.json({ success: true, scholarship, message: 'Scholarship approved successfully' });
-  } catch (error) {
-    console.error('Approve scholarship error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// Reject scholarship (admin only)
-router.put('/:id/reject', auth, isAdmin, async (req, res) => {
-  try {
-    const scholarship = await Scholarship.findById(req.params.id);
-
-    if (!scholarship) {
-      return res.status(404).json({ success: false, message: 'Scholarship not found' });
-    }
-
-    scholarship.status = 'rejected';
-    await scholarship.save();
-
-    res.json({ success: true, scholarship, message: 'Scholarship rejected successfully' });
-  } catch (error) {
-    console.error('Reject scholarship error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
 // Delete scholarship (authenticated, owner only)
 router.delete('/:id', auth, async (req, res) => {
   try {
@@ -390,11 +262,8 @@ router.delete('/:id', auth, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Scholarship not found' });
     }
 
-    const ownerId = scholarship.createdBy || scholarship.postedBy;
-    const isOwner = ownerId && ownerId.toString() === req.user._id.toString();
-    const isAdminUser = req.user.role === 'admin';
-
-    if (!isAdminUser && !isOwner) {
+    // Check ownership
+    if (scholarship.postedBy?.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: 'Not authorized to delete this scholarship' });
     }
 

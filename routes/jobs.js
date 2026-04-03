@@ -3,59 +3,9 @@ const router = express.Router();
 const Job = require('../models/Job');
 const User = require('../models/User');
 const { auth } = require('../middleware/auth');
-const isAdmin = require('../middleware/isAdmin');
 
 const normalize = (value) => String(value || '').toLowerCase().trim();
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const ALLOWED_POST_STATUSES = ['pending', 'approved', 'rejected'];
-
-const safePageValue = (page) => Math.max(parseInt(page, 10) || 1, 1);
-const safeLimitValue = (limit) => Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
-
-const applyJobFilters = async (filters, query) => {
-  if (filters.type) {
-    query.type = { $regex: `^${escapeRegex(filters.type)}$`, $options: 'i' };
-  }
-
-  if (filters.location) {
-    query.location = { $regex: escapeRegex(filters.location), $options: 'i' };
-  }
-
-  if (filters.experience) {
-    query.experience = { $regex: escapeRegex(filters.experience), $options: 'i' };
-  }
-
-  if (filters.search) {
-    const searchRegex = { $regex: escapeRegex(filters.search), $options: 'i' };
-    query.$or = [
-      { title: searchRegex },
-      { company: searchRegex },
-      { location: searchRegex },
-      { description: searchRegex },
-      { skills: searchRegex },
-    ];
-  }
-
-  if (filters.role) {
-    const roleRegex = { $regex: `^${escapeRegex(filters.role)}$`, $options: 'i' };
-    const matchingUsers = await User.find({
-      $or: [
-        { role: roleRegex },
-        { userType: roleRegex },
-      ],
-    }).select('_id');
-
-    const userIds = matchingUsers.map((u) => u._id);
-    if (userIds.length === 0) {
-      return { noUserMatch: true };
-    }
-
-    query.postedBy = { $in: userIds };
-  }
-
-  return { noUserMatch: false };
-};
 
 // Get all jobs (public)
 router.get('/', async (req, res) => {
@@ -78,110 +28,78 @@ router.get('/', async (req, res) => {
       role: normalize(role),
     };
 
-    const query = {
-      isActive: true,
-      status: 'approved',
-    };
+    const query = { isActive: true };
 
-    const filterOutcome = await applyJobFilters(filters, query);
-    if (filterOutcome.noUserMatch) {
-      console.log('[Jobs][filters]', filters);
-      console.log('[Jobs][query]', query);
-      console.log('[Jobs][response]', { count: 0, total: 0 });
-      return res.json({
-        success: true,
-        jobs: [],
-        pagination: { page: safePageValue(page), limit: safeLimitValue(limit), total: 0 },
-      });
+    if (filters.type) {
+      query.type = { $regex: `^${escapeRegex(filters.type)}$`, $options: 'i' };
+    }
+
+    if (filters.location) {
+      query.location = { $regex: escapeRegex(filters.location), $options: 'i' };
+    }
+
+    if (filters.experience) {
+      query.experience = { $regex: escapeRegex(filters.experience), $options: 'i' };
+    }
+
+    if (filters.search) {
+      const searchRegex = { $regex: escapeRegex(filters.search), $options: 'i' };
+      query.$or = [
+        { title: searchRegex },
+        { company: searchRegex },
+        { location: searchRegex },
+        { description: searchRegex },
+        { skills: searchRegex },
+      ];
+    }
+
+    if (filters.role) {
+      const roleRegex = { $regex: `^${escapeRegex(filters.role)}$`, $options: 'i' };
+      const matchingUsers = await User.find({
+        $or: [
+          { role: roleRegex },
+          { userType: roleRegex },
+        ],
+      }).select('_id');
+
+      const userIds = matchingUsers.map((u) => u._id);
+      if (userIds.length === 0) {
+        console.log('[Jobs][filters]', filters);
+        console.log('[Jobs][query]', query);
+        console.log('[Jobs][response]', { count: 0, total: 0 });
+        return res.json({
+          success: true,
+          jobs: [],
+          pagination: { page: Math.max(parseInt(page, 10) || 1, 1), limit: Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100), total: 0 },
+        });
+      }
+
+      query.postedBy = { $in: userIds };
     }
 
     console.log('[Jobs][filters]', filters);
     console.log('[Jobs][query]', query);
 
-    const safePage = safePageValue(page);
-    const safeLimit = safeLimitValue(limit);
+    const safePage = Math.max(parseInt(page, 10) || 1, 1);
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
     const jobs = await Job.find(query)
       .sort({ createdAt: -1 })
       .limit(safeLimit)
       .skip((safePage - 1) * safeLimit)
       .populate('postedBy', 'fullName studentId profileImage role userType');
-
+    
     const total = await Job.countDocuments(query);
 
     console.log('[Jobs][response]', { count: jobs.length, total });
-
-    res.json({
-      success: true,
+    
+    res.json({ 
+      success: true, 
       jobs,
       pagination: { page: safePage, limit: safeLimit, total }
     });
   } catch (error) {
     console.error('Get jobs error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// Get all jobs for admin (includes pending/approved/rejected)
-router.get('/all', auth, isAdmin, async (req, res) => {
-  try {
-    const {
-      type,
-      location,
-      search,
-      experience,
-      role,
-      status,
-      limit = 20,
-      page = 1,
-    } = req.query;
-
-    const filters = {
-      search: normalize(search),
-      type: normalize(type),
-      location: normalize(location),
-      experience: normalize(experience),
-      role: normalize(role),
-      status: normalize(status),
-    };
-
-    const query = { isActive: true };
-
-    if (filters.status) {
-      if (!ALLOWED_POST_STATUSES.includes(filters.status)) {
-        return res.status(400).json({ success: false, message: 'Invalid status filter' });
-      }
-      query.status = filters.status;
-    }
-
-    const filterOutcome = await applyJobFilters(filters, query);
-    if (filterOutcome.noUserMatch) {
-      return res.json({
-        success: true,
-        jobs: [],
-        pagination: { page: safePageValue(page), limit: safeLimitValue(limit), total: 0 },
-      });
-    }
-
-    const safePage = safePageValue(page);
-    const safeLimit = safeLimitValue(limit);
-
-    const jobs = await Job.find(query)
-      .sort({ createdAt: -1 })
-      .limit(safeLimit)
-      .skip((safePage - 1) * safeLimit)
-      .populate('postedBy', 'fullName studentId profileImage role userType')
-      .populate('createdBy', 'fullName studentId profileImage role userType');
-
-    const total = await Job.countDocuments(query);
-
-    res.json({
-      success: true,
-      jobs,
-      pagination: { page: safePage, limit: safeLimit, total }
-    });
-  } catch (error) {
-    console.error('Get all jobs (admin) error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
@@ -205,9 +123,6 @@ router.get('/:id', async (req, res) => {
 router.post('/', auth, async (req, res) => {
   try {
     const { title, company, location, type, description, requirements, salary, deadline, applyLink } = req.body;
-
-    const postingRole = req.user.role === 'admin' ? 'admin' : 'user';
-    const postingStatus = req.user.role === 'admin' ? 'approved' : 'pending';
     
     // Validate required fields
     if (!title || !company || !description) {
@@ -225,10 +140,7 @@ router.post('/', auth, async (req, res) => {
       salary: salary || {},
       applicationDeadline: deadline ? new Date(deadline) : null,
       applyLink: applyLink?.trim().slice(0, 500) || '',
-      postedBy: req.user._id,
-      createdBy: req.user._id,
-      role: postingRole,
-      status: postingStatus,
+      postedBy: req.user._id
     });
 
     await job.save();
@@ -248,11 +160,8 @@ router.put('/:id', auth, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Job not found' });
     }
 
-    const ownerId = job.createdBy || job.postedBy;
-    const isOwner = ownerId && ownerId.toString() === req.user._id.toString();
-    const isAdminUser = req.user.role === 'admin';
-
-    if (!isAdminUser && !isOwner) {
+    // Check ownership
+    if (job.postedBy.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: 'Not authorized to update this job' });
     }
 
@@ -276,53 +185,10 @@ router.put('/:id', auth, async (req, res) => {
       updates.requirements = updates.requirements.slice(0, 20);
     }
 
-    if (updates.deadline !== undefined) {
-      updates.applicationDeadline = updates.deadline ? new Date(updates.deadline) : null;
-      delete updates.deadline;
-    }
-
     const updatedJob = await Job.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
     res.json({ success: true, job: updatedJob, message: 'Job updated successfully' });
   } catch (error) {
     console.error('Update job error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// Approve job (admin only)
-router.put('/:id/approve', auth, isAdmin, async (req, res) => {
-  try {
-    const job = await Job.findById(req.params.id);
-
-    if (!job) {
-      return res.status(404).json({ success: false, message: 'Job not found' });
-    }
-
-    job.status = 'approved';
-    await job.save();
-
-    res.json({ success: true, job, message: 'Job approved successfully' });
-  } catch (error) {
-    console.error('Approve job error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// Reject job (admin only)
-router.put('/:id/reject', auth, isAdmin, async (req, res) => {
-  try {
-    const job = await Job.findById(req.params.id);
-
-    if (!job) {
-      return res.status(404).json({ success: false, message: 'Job not found' });
-    }
-
-    job.status = 'rejected';
-    await job.save();
-
-    res.json({ success: true, job, message: 'Job rejected successfully' });
-  } catch (error) {
-    console.error('Reject job error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
@@ -336,11 +202,8 @@ router.delete('/:id', auth, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Job not found' });
     }
 
-    const ownerId = job.createdBy || job.postedBy;
-    const isOwner = ownerId && ownerId.toString() === req.user._id.toString();
-    const isAdminUser = req.user.role === 'admin';
-
-    if (!isAdminUser && !isOwner) {
+    // Check ownership
+    if (job.postedBy.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: 'Not authorized to delete this job' });
     }
 

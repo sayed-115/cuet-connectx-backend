@@ -99,6 +99,40 @@ mongoose.connect(DATABASE_URL)
       const Job = require('./models/Job');
       const Scholarship = require('./models/Scholarship');
 
+      const backfillCreatedByFromPostedBy = async (Model) => {
+        const docs = await Model.find({
+          postedBy: { $exists: true, $ne: null },
+          $or: [
+            { createdBy: { $exists: false } },
+            { createdBy: null },
+          ],
+        })
+          .select('_id postedBy')
+          .lean();
+
+        if (!docs.length) return { modifiedCount: 0 };
+
+        const operations = docs
+          .filter((doc) => doc.postedBy)
+          .map((doc) => ({
+            updateOne: {
+              filter: {
+                _id: doc._id,
+                $or: [
+                  { createdBy: { $exists: false } },
+                  { createdBy: null },
+                ],
+              },
+              update: { $set: { createdBy: doc.postedBy } },
+            },
+          }));
+
+        if (!operations.length) return { modifiedCount: 0 };
+
+        const result = await Model.bulkWrite(operations, { ordered: false });
+        return { modifiedCount: result.modifiedCount || result.nModified || 0 };
+      };
+
       const result = await User.updateMany(
         { emailVerified: { $ne: true }, emailVerificationToken: { $exists: false } },
         { $set: { emailVerified: true } }
@@ -115,18 +149,48 @@ mongoose.connect(DATABASE_URL)
         scholarshipRoleResult,
         scholarshipCreatedByResult,
       ] = await Promise.all([
-        Job.updateMany({ status: { $exists: false } }, { $set: { status: 'approved' } }),
-        Job.updateMany({ role: { $exists: false } }, { $set: { role: 'user' } }),
         Job.updateMany(
-          { createdBy: { $exists: false }, postedBy: { $exists: true } },
-          [{ $set: { createdBy: '$postedBy' } }]
+          {
+            $or: [
+              { status: { $exists: false } },
+              { status: null },
+              { status: '' },
+            ],
+          },
+          { $set: { status: 'approved' } }
         ),
-        Scholarship.updateMany({ status: { $exists: false } }, { $set: { status: 'approved' } }),
-        Scholarship.updateMany({ role: { $exists: false } }, { $set: { role: 'user' } }),
+        Job.updateMany(
+          {
+            $or: [
+              { role: { $exists: false } },
+              { role: null },
+              { role: '' },
+            ],
+          },
+          { $set: { role: 'user' } }
+        ),
+        backfillCreatedByFromPostedBy(Job),
         Scholarship.updateMany(
-          { createdBy: { $exists: false }, postedBy: { $exists: true } },
-          [{ $set: { createdBy: '$postedBy' } }]
+          {
+            $or: [
+              { status: { $exists: false } },
+              { status: null },
+              { status: '' },
+            ],
+          },
+          { $set: { status: 'approved' } }
         ),
+        Scholarship.updateMany(
+          {
+            $or: [
+              { role: { $exists: false } },
+              { role: null },
+              { role: '' },
+            ],
+          },
+          { $set: { role: 'user' } }
+        ),
+        backfillCreatedByFromPostedBy(Scholarship),
       ]);
 
       if (jobStatusResult.modifiedCount > 0 || jobRoleResult.modifiedCount > 0 || jobCreatedByResult.modifiedCount > 0) {

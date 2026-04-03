@@ -25,6 +25,7 @@ if (DATABASE_URL) {
 }
 
 const frontendUrl = asTrimmed(process.env.FRONTEND_URL);
+const emailSender = asTrimmed(process.env.SENDGRID_FROM_EMAIL) || asTrimmed(process.env.EMAIL_USER);
 const corsFromEnv = asTrimmed(process.env.CORS_ORIGIN)
   .split(',')
   .map((o) => o.trim())
@@ -40,7 +41,7 @@ const requiredRuntimeEnv = {
   DATABASE_URL,
   JWT_SECRET: asTrimmed(process.env.JWT_SECRET),
   SENDGRID_API_KEY: asTrimmed(process.env.SENDGRID_API_KEY),
-  EMAIL_USER: asTrimmed(process.env.EMAIL_USER),
+  EMAIL_SENDER: emailSender,
   FRONTEND_URL: frontendUrl,
 };
 
@@ -127,12 +128,12 @@ app.use('/api/admin', adminRoutes);
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: 9,
+    version: 10,
     message: 'CUET ConnectX API is running!',
     config_status: {
       DATABASE_URL: DATABASE_URL ? '✓ set' : '✗ MISSING',
       JWT_SECRET: process.env.JWT_SECRET ? '✓ set' : '✗ MISSING',
-      EMAIL_CONFIG: process.env.EMAIL_USER && process.env.SENDGRID_API_KEY ? '✓ configured' : '✗ INCOMPLETE',
+      EMAIL_CONFIG: emailSender && process.env.SENDGRID_API_KEY ? '✓ configured' : '✗ INCOMPLETE',
       FRONTEND_URL: process.env.FRONTEND_URL ? '✓ set' : '✗ MISSING (will default to localhost)',
       CORS_ORIGIN: process.env.CORS_ORIGIN ? '✓ set' : '✗ MISSING',
     }

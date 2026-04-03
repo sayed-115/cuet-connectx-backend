@@ -99,7 +99,9 @@ JWT_SECRET=your_jwt_secret_here
 CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
 
 # Email (SendGrid HTTP API)
-EMAIL_USER=your-verified-sender@yourdomain.com
+SENDGRID_FROM_EMAIL=your-verified-sender@yourdomain.com
+# Optional fallback if SENDGRID_FROM_EMAIL is not set:
+# EMAIL_USER=your-verified-sender@yourdomain.com
 SENDGRID_API_KEY=your-sendgrid-api-key
 
 # URLs
@@ -137,7 +139,7 @@ npm run seed-admin      # Create admin user
 5. Set `CORS_ORIGIN` to your Vercel frontend URL
 6. Set `FRONTEND_URL` to your Vercel frontend URL (used in email links)
 
-> **Note:** Email is sent via SendGrid (`@sendgrid/mail`). `EMAIL_USER` must be a verified sender identity/domain in SendGrid, and `SENDGRID_API_KEY` must be a valid API key with Mail Send permissions.
+> **Note:** Email is sent via SendGrid (`@sendgrid/mail`). Set `SENDGRID_FROM_EMAIL` to a verified sender identity/domain in SendGrid (or use `EMAIL_USER` as fallback), and ensure `SENDGRID_API_KEY` has Mail Send permissions.
 
 ---
 

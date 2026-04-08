@@ -7,20 +7,7 @@ if (SENDGRID_API_KEY) {
   console.error('[Email] SENDGRID_API_KEY is missing. Email delivery will fail until it is configured.');
 }
 
-const EMAIL_SENDER = (process.env.SENDGRID_FROM_EMAIL || process.env.EMAIL_USER || '').trim();
-const MAX_SEND_ATTEMPTS = Math.max(
-  1,
-  Number.parseInt((process.env.SENDGRID_MAX_SEND_ATTEMPTS || '2').trim(), 10) || 2
-);
-const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
-const RETRYABLE_NETWORK_CODES = new Set(['ETIMEDOUT', 'ECONNRESET', 'ECONNABORTED', 'ENOTFOUND', 'EAI_AGAIN']);
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function isRetryableSendError(error, statusCode) {
-  const networkCode = typeof error?.code === 'string' ? error.code.toUpperCase() : '';
-  return RETRYABLE_STATUS_CODES.has(Number(statusCode)) || RETRYABLE_NETWORK_CODES.has(networkCode);
-}
+const FROM_EMAIL = (process.env.EMAIL_USER || '').trim();
 
 function getFrontendUrl() {
   const frontendUrl = (process.env.FRONTEND_URL || '').trim();
@@ -40,7 +27,7 @@ function tokenForLog(token) {
 function assertEmailConfig() {
   const missing = [];
   if (!SENDGRID_API_KEY) missing.push('SENDGRID_API_KEY');
-  if (!EMAIL_SENDER) missing.push('SENDGRID_FROM_EMAIL (or EMAIL_USER)');
+  if (!FROM_EMAIL) missing.push('EMAIL_USER');
 
   if (missing.length > 0) {
     throw new Error(`[Email] Missing required email environment variables: ${missing.join(', ')}`);
@@ -50,60 +37,36 @@ function assertEmailConfig() {
 async function sendWithLogging({ to, subject, html, flow, token }) {
   assertEmailConfig();
 
-  for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt += 1) {
-    try {
-      const [response] = await sgMail.send({
-        to,
-        from: { email: EMAIL_SENDER, name: 'CUET ConnectX' },
-        subject,
-        html,
-      });
+  try {
+    const [response] = await sgMail.send({
+      to,
+      from: { email: FROM_EMAIL, name: 'CUET ConnectX' },
+      subject,
+      html,
+    });
 
-      const messageId = response?.headers?.['x-message-id'] || response?.headers?.['X-Message-Id'] || 'n/a';
-      console.log(`[Email][${flow}] SendGrid accepted email`, {
-        to,
-        from: EMAIL_SENDER,
-        statusCode: response?.statusCode,
-        messageId,
-        tokenPreview: tokenForLog(token),
-        attempt,
-        maxAttempts: MAX_SEND_ATTEMPTS,
-      });
+    const messageId = response?.headers?.['x-message-id'] || response?.headers?.['X-Message-Id'] || 'n/a';
+    console.log(`[Email][${flow}] SendGrid accepted email`, {
+      to,
+      from: FROM_EMAIL,
+      statusCode: response?.statusCode,
+      messageId,
+      tokenPreview: tokenForLog(token),
+    });
 
-      return response;
-    } catch (error) {
-      const statusCode = Number(error?.response?.statusCode || error?.code || 0);
-      const sgErrors = error?.response?.body?.errors || error?.response?.body || null;
-      const retryable = attempt < MAX_SEND_ATTEMPTS && isRetryableSendError(error, statusCode);
-
-      console.error(`[Email][${flow}] SendGrid send failed`, {
-        to,
-        from: EMAIL_SENDER,
-        tokenPreview: tokenForLog(token),
-        error: error.message,
-        statusCode,
-        sendgrid: sgErrors,
-        attempt,
-        maxAttempts: MAX_SEND_ATTEMPTS,
-        retryable,
-      });
-
-      if (!retryable) {
-        throw error;
-      }
-
-      const delayMs = Math.min(5000, 500 * 2 ** (attempt - 1));
-      console.warn(`[Email][${flow}] Retrying email send after transient failure`, {
-        to,
-        attempt: attempt + 1,
-        maxAttempts: MAX_SEND_ATTEMPTS,
-        delayMs,
-      });
-      await sleep(delayMs);
-    }
+    return response;
+  } catch (error) {
+    const sgErrors = error?.response?.body?.errors || error?.response?.body || null;
+    console.error(`[Email][${flow}] SendGrid send failed`, {
+      to,
+      from: FROM_EMAIL,
+      tokenPreview: tokenForLog(token),
+      error: error.message,
+      statusCode: error?.code || error?.response?.statusCode,
+      sendgrid: sgErrors,
+    });
+    throw error;
   }
-
-  throw new Error(`[Email][${flow}] Failed to send email after ${MAX_SEND_ATTEMPTS} attempts`);
 }
 
 /**

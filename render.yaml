@@ -13,21 +13,9 @@ services:
         value: production
       - key: MONGODB_URI
         sync: false
-      - key: DATABASE_URL
-        sync: false
       - key: JWT_SECRET
         sync: false
       - key: CORS_ORIGIN
         sync: false
-      - key: FRONTEND_URL
-        sync: false
-      - key: BACKEND_URL
-        sync: false
       - key: CLOUDINARY_URL
-        sync: false
-      - key: SENDGRID_FROM_EMAIL
-        sync: false
-      - key: EMAIL_USER
-        sync: false
-      - key: SENDGRID_API_KEY
         sync: false

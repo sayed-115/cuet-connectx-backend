@@ -18,14 +18,9 @@ const app = express();
 
 const asTrimmed = (value) => (value || '').trim();
 
-// Support both MONGODB_URI and DATABASE_URL naming used across platforms
-const DATABASE_URL = asTrimmed(process.env.MONGODB_URI) || asTrimmed(process.env.DATABASE_URL);
-if (DATABASE_URL) {
-  process.env.MONGODB_URI = DATABASE_URL;
-}
+const mongoUrl = asTrimmed(process.env.MONGODB_URI);
 
 const frontendUrl = asTrimmed(process.env.FRONTEND_URL);
-const emailSender = asTrimmed(process.env.SENDGRID_FROM_EMAIL) || asTrimmed(process.env.EMAIL_USER);
 const corsFromEnv = asTrimmed(process.env.CORS_ORIGIN)
   .split(',')
   .map((o) => o.trim())
@@ -38,10 +33,10 @@ const allowedOrigins = Array.from(new Set([
 ]));
 
 const requiredRuntimeEnv = {
-  DATABASE_URL,
+  MONGODB_URI: mongoUrl,
   JWT_SECRET: asTrimmed(process.env.JWT_SECRET),
   SENDGRID_API_KEY: asTrimmed(process.env.SENDGRID_API_KEY),
-  EMAIL_SENDER: emailSender,
+  EMAIL_USER: asTrimmed(process.env.EMAIL_USER),
   FRONTEND_URL: frontendUrl,
 };
 
@@ -85,120 +80,23 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
 // Connect to MongoDB
-if (!DATABASE_URL) {
-  console.error('❌ MongoDB connection string is missing. Set MONGODB_URI or DATABASE_URL.');
+if (!mongoUrl) {
+  console.error('❌ MongoDB connection string is missing. Set MONGODB_URI.');
   process.exit(1);
 }
 
-mongoose.connect(DATABASE_URL)
+mongoose.connect(mongoUrl)
   .then(async () => {
     console.log('✅ Connected to MongoDB');
-    // One-time migrations: keep legacy data compatible with current runtime contracts
+    // One-time migration: mark pre-existing users (registered before email verification feature) as verified
     try {
       const User = require('./models/User');
-      const Job = require('./models/Job');
-      const Scholarship = require('./models/Scholarship');
-
-      const backfillCreatedByFromPostedBy = async (Model) => {
-        const docs = await Model.find({
-          postedBy: { $exists: true, $ne: null },
-          $or: [
-            { createdBy: { $exists: false } },
-            { createdBy: null },
-          ],
-        })
-          .select('_id postedBy')
-          .lean();
-
-        if (!docs.length) return { modifiedCount: 0 };
-
-        const operations = docs
-          .filter((doc) => doc.postedBy)
-          .map((doc) => ({
-            updateOne: {
-              filter: {
-                _id: doc._id,
-                $or: [
-                  { createdBy: { $exists: false } },
-                  { createdBy: null },
-                ],
-              },
-              update: { $set: { createdBy: doc.postedBy } },
-            },
-          }));
-
-        if (!operations.length) return { modifiedCount: 0 };
-
-        const result = await Model.bulkWrite(operations, { ordered: false });
-        return { modifiedCount: result.modifiedCount || result.nModified || 0 };
-      };
-
       const result = await User.updateMany(
         { emailVerified: { $ne: true }, emailVerificationToken: { $exists: false } },
         { $set: { emailVerified: true } }
       );
       if (result.modifiedCount > 0) {
         console.log(`✅ Migration: marked ${result.modifiedCount} existing user(s) as email-verified`);
-      }
-
-      const [
-        jobStatusResult,
-        jobRoleResult,
-        jobCreatedByResult,
-        scholarshipStatusResult,
-        scholarshipRoleResult,
-        scholarshipCreatedByResult,
-      ] = await Promise.all([
-        Job.updateMany(
-          {
-            $or: [
-              { status: { $exists: false } },
-              { status: null },
-              { status: '' },
-            ],
-          },
-          { $set: { status: 'approved' } }
-        ),
-        Job.updateMany(
-          {
-            $or: [
-              { role: { $exists: false } },
-              { role: null },
-              { role: '' },
-            ],
-          },
-          { $set: { role: 'user' } }
-        ),
-        backfillCreatedByFromPostedBy(Job),
-        Scholarship.updateMany(
-          {
-            $or: [
-              { status: { $exists: false } },
-              { status: null },
-              { status: '' },
-            ],
-          },
-          { $set: { status: 'approved' } }
-        ),
-        Scholarship.updateMany(
-          {
-            $or: [
-              { role: { $exists: false } },
-              { role: null },
-              { role: '' },
-            ],
-          },
-          { $set: { role: 'user' } }
-        ),
-        backfillCreatedByFromPostedBy(Scholarship),
-      ]);
-
-      if (jobStatusResult.modifiedCount > 0 || jobRoleResult.modifiedCount > 0 || jobCreatedByResult.modifiedCount > 0) {
-        console.log(`[Migration][Job] status:${jobStatusResult.modifiedCount}, role:${jobRoleResult.modifiedCount}, createdBy:${jobCreatedByResult.modifiedCount}`);
-      }
-
-      if (scholarshipStatusResult.modifiedCount > 0 || scholarshipRoleResult.modifiedCount > 0 || scholarshipCreatedByResult.modifiedCount > 0) {
-        console.log(`[Migration][Scholarship] status:${scholarshipStatusResult.modifiedCount}, role:${scholarshipRoleResult.modifiedCount}, createdBy:${scholarshipCreatedByResult.modifiedCount}`);
       }
     } catch (migrationErr) {
       console.error('Migration warning:', migrationErr.message);
@@ -225,14 +123,15 @@ app.use('/api/admin', adminRoutes);
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: 11,
+    version: 8,
     message: 'CUET ConnectX API is running!',
     config_status: {
-      DATABASE_URL: DATABASE_URL ? '✓ set' : '✗ MISSING',
+      MONGODB_URI: mongoUrl ? '✓ set' : '✗ MISSING',
       JWT_SECRET: process.env.JWT_SECRET ? '✓ set' : '✗ MISSING',
-      EMAIL_CONFIG: emailSender && process.env.SENDGRID_API_KEY ? '✓ configured' : '✗ INCOMPLETE',
-      FRONTEND_URL: process.env.FRONTEND_URL ? '✓ set' : '✗ MISSING (will default to localhost)',
-      CORS_ORIGIN: process.env.CORS_ORIGIN ? '✓ set' : '✗ MISSING',
+      EMAIL_USER: process.env.EMAIL_USER ? `✓ ${process.env.EMAIL_USER.trim()}` : '✗ MISSING',
+      SENDGRID_API_KEY: process.env.SENDGRID_API_KEY ? `✓ set (${process.env.SENDGRID_API_KEY.trim().substring(0, 5)}...)` : '✗ MISSING',
+      FRONTEND_URL: process.env.FRONTEND_URL ? `✓ ${process.env.FRONTEND_URL.trim()}` : '✗ MISSING (will default to localhost)',
+      CORS_ORIGIN: process.env.CORS_ORIGIN ? `✓ ${process.env.CORS_ORIGIN.trim()}` : '✗ MISSING',
     }
   });
 });

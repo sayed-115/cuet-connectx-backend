@@ -154,7 +154,7 @@ router.get('/', async (req, res) => {
     const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
     const scholarships = await Scholarship.find(query)
-      .populate('postedBy', 'fullName studentId')
+      .populate('postedBy', 'fullName studentId role userType')
       .sort({ createdAt: -1 })
       .limit(safeLimit)
       .skip((safePage - 1) * safeLimit);

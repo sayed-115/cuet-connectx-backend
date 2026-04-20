@@ -18,7 +18,7 @@
 ```
 Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
                                             →  Cloudinary (images)
-                                            →  SendGrid (transactional emails)
+                                            →  Gmail SMTP via Nodemailer (transactional emails)
 ```
 
 ---
@@ -38,7 +38,7 @@ Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
 
 ### How it works
 
-1. **Signup** → User created with `emailVerified: false` → SHA-256 hashed verification token stored → email sent via SendGrid → user clicks link → `emailVerified: true`
+1. **Signup** → User created with `emailVerified: false` → SHA-256 hashed verification token stored → email sent via Gmail SMTP → user clicks link → `emailVerified: true`
 2. **Login** → Blocked if `emailVerified: false` (403) → JWT issued on success (7-day expiry)
 3. **Forgot password** → Accepts email or studentId → SHA-256 hashed token stored → reset email sent → 10-minute expiry
 4. **Reset password** → Token verified → password updated → `passwordChangedAt` set → old JWTs invalidated
@@ -67,7 +67,7 @@ Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
 
 - Node.js 18+
 - MongoDB Atlas cluster (or local MongoDB)
-- [SendGrid](https://sendgrid.com/) account with API key and verified sender email
+- Gmail or Google Workspace account with SMTP app password
 - [Cloudinary](https://cloudinary.com/) account (image hosting)
 
 ### Installation
@@ -96,9 +96,13 @@ JWT_SECRET=your_jwt_secret_here
 # Cloudinary
 CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
 
-# Email (SendGrid HTTP API)
-EMAIL_USER=your-verified-sender@yourdomain.com
-SENDGRID_API_KEY=your-sendgrid-api-key
+# Email (Gmail SMTP)
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASS=your-16-char-app-password
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+EMAIL_FROM_NAME=CUET ConnectX
 
 # URLs
 FRONTEND_URL=http://localhost:5173
@@ -135,7 +139,7 @@ npm run seed-admin      # Create admin user
 5. Set `CORS_ORIGIN` to your Vercel frontend URL
 6. Set `FRONTEND_URL` to your Vercel frontend URL (used in email links)
 
-> **Note:** Email is sent via SendGrid (`@sendgrid/mail`). `EMAIL_USER` must be a verified sender identity/domain in SendGrid, and `SENDGRID_API_KEY` must be a valid API key with Mail Send permissions.
+> **Note:** Email is sent via SMTP using `nodemailer`. For Gmail/Google Workspace, use an App Password (`EMAIL_PASS`) and keep `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_SECURE=false`.
 
 ---
 
@@ -166,7 +170,7 @@ npm run seed-admin      # Create admin user
 │   ├── posts.js           # Post CRUD
 │   └── adminRoutes.js     # Admin panel routes
 ├── utils/
-│   ├── email.js           # SendGrid email service
+│   ├── email.js           # SMTP email service (Nodemailer)
 │   └── cloudinary.js      # Cloudinary helpers
 ├── seed/                  # Database seeders
 ├── scripts/               # Admin scripts

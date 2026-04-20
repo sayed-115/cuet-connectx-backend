@@ -35,8 +35,8 @@ const allowedOrigins = Array.from(new Set([
 const requiredRuntimeEnv = {
   MONGODB_URI: mongoUrl,
   JWT_SECRET: asTrimmed(process.env.JWT_SECRET),
-  SENDGRID_API_KEY: asTrimmed(process.env.SENDGRID_API_KEY),
   EMAIL_USER: asTrimmed(process.env.EMAIL_USER),
+  EMAIL_PASS: asTrimmed(process.env.EMAIL_PASS),
   FRONTEND_URL: frontendUrl,
 };
 
@@ -129,7 +129,10 @@ app.get('/api/health', (req, res) => {
       MONGODB_URI: mongoUrl ? '✓ set' : '✗ MISSING',
       JWT_SECRET: process.env.JWT_SECRET ? '✓ set' : '✗ MISSING',
       EMAIL_USER: process.env.EMAIL_USER ? `✓ ${process.env.EMAIL_USER.trim()}` : '✗ MISSING',
-      SENDGRID_API_KEY: process.env.SENDGRID_API_KEY ? `✓ set (${process.env.SENDGRID_API_KEY.trim().substring(0, 5)}...)` : '✗ MISSING',
+      EMAIL_PASS: process.env.EMAIL_PASS ? '✓ set' : '✗ MISSING',
+      SMTP_HOST: process.env.SMTP_HOST ? `✓ ${process.env.SMTP_HOST.trim()}` : '✓ default (smtp.gmail.com)',
+      SMTP_PORT: process.env.SMTP_PORT ? `✓ ${process.env.SMTP_PORT.trim()}` : '✓ default (587)',
+      SMTP_SECURE: process.env.SMTP_SECURE ? `✓ ${process.env.SMTP_SECURE.trim()}` : '✓ default (false)',
       FRONTEND_URL: process.env.FRONTEND_URL ? `✓ ${process.env.FRONTEND_URL.trim()}` : '✗ MISSING (will default to localhost)',
       CORS_ORIGIN: process.env.CORS_ORIGIN ? `✓ ${process.env.CORS_ORIGIN.trim()}` : '✗ MISSING',
     }

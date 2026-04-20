@@ -121,21 +121,29 @@ app.use('/api/admin', adminRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({
+  const payload = {
     status: 'ok',
-    version: 8,
+    version: 9,
     message: 'CUET ConnectX API is running!',
+  };
+
+  if (process.env.NODE_ENV === 'production') {
+    return res.json(payload);
+  }
+
+  return res.json({
+    ...payload,
     config_status: {
-      MONGODB_URI: mongoUrl ? '✓ set' : '✗ MISSING',
-      JWT_SECRET: process.env.JWT_SECRET ? '✓ set' : '✗ MISSING',
-      EMAIL_USER: process.env.EMAIL_USER ? `✓ ${process.env.EMAIL_USER.trim()}` : '✗ MISSING',
-      EMAIL_PASS: process.env.EMAIL_PASS ? '✓ set' : '✗ MISSING',
-      SMTP_HOST: process.env.SMTP_HOST ? `✓ ${process.env.SMTP_HOST.trim()}` : '✓ default (smtp.gmail.com)',
-      SMTP_PORT: process.env.SMTP_PORT ? `✓ ${process.env.SMTP_PORT.trim()}` : '✓ default (587)',
-      SMTP_SECURE: process.env.SMTP_SECURE ? `✓ ${process.env.SMTP_SECURE.trim()}` : '✓ default (false)',
-      FRONTEND_URL: process.env.FRONTEND_URL ? `✓ ${process.env.FRONTEND_URL.trim()}` : '✗ MISSING (will default to localhost)',
-      CORS_ORIGIN: process.env.CORS_ORIGIN ? `✓ ${process.env.CORS_ORIGIN.trim()}` : '✗ MISSING',
-    }
+      MONGODB_URI: mongoUrl ? 'set' : 'missing',
+      JWT_SECRET: asTrimmed(process.env.JWT_SECRET) ? 'set' : 'missing',
+      EMAIL_USER: asTrimmed(process.env.EMAIL_USER) ? 'set' : 'missing',
+      EMAIL_PASS: asTrimmed(process.env.EMAIL_PASS) ? 'set' : 'missing',
+      SMTP_HOST: asTrimmed(process.env.SMTP_HOST) ? 'set' : 'default(smtp.gmail.com)',
+      SMTP_PORT: asTrimmed(process.env.SMTP_PORT) ? 'set' : 'default(587)',
+      SMTP_SECURE: asTrimmed(process.env.SMTP_SECURE) ? 'set' : 'default(false)',
+      FRONTEND_URL: frontendUrl ? 'set' : 'missing',
+      CORS_ORIGIN: corsFromEnv.length > 0 ? 'set' : 'missing',
+    },
   });
 });
 

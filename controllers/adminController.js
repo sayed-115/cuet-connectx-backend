@@ -16,6 +16,22 @@ const sendError = (res, message, statusCode = 400) =>
   res.status(statusCode).json({ success: false, message });
 
 const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
+const isValidHttpUrl = (value) => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch (_err) {
+    return false;
+  }
+};
+
+const parseDateField = (value) => {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (value === null || String(value).trim() === '') return { ok: true, value: null };
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return { ok: false, value: null };
+  return { ok: true, value: parsed };
+};
 
 // ── 1. Dashboard Overview ──────────────────────────────────
 exports.getDashboardOverview = async (req, res) => {
@@ -361,6 +377,16 @@ exports.createJob = async (req, res) => {
       return sendError(res, 'Title, company, and description are required');
     }
 
+    const sanitizedApplyLink = applyLink?.trim().slice(0, 500) || '';
+    if (sanitizedApplyLink && !isValidHttpUrl(sanitizedApplyLink)) {
+      return sendError(res, 'Application link must be a valid http/https URL');
+    }
+
+    const parsedDeadline = parseDateField(deadline);
+    if (!parsedDeadline.ok) {
+      return sendError(res, 'Invalid application deadline');
+    }
+
     const job = new Job({
       title: title.trim().slice(0, 200),
       company: company.trim().slice(0, 100),
@@ -369,8 +395,8 @@ exports.createJob = async (req, res) => {
       description: description.trim().slice(0, 5000),
       requirements: Array.isArray(requirements) ? requirements.slice(0, 20) : [],
       salary: salary || {},
-      applicationDeadline: deadline ? new Date(deadline) : null,
-      applyLink: applyLink?.trim().slice(0, 500) || '',
+      applicationDeadline: parsedDeadline.value,
+      applyLink: sanitizedApplyLink,
       jobImage: jobImage?.trim().slice(0, 500) || null,
       postedBy: req.user._id
     });
@@ -396,10 +422,21 @@ exports.updateJob = async (req, res) => {
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
     }
+    if (req.body.deadline !== undefined) {
+      updates.applicationDeadline = req.body.deadline;
+    }
 
     // Sanitize string fields
     for (const key of ['title', 'company', 'location', 'description', 'applyLink', 'jobImage']) {
       if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, key === 'description' ? 5000 : 500);
+    }
+    if (updates.applyLink && !isValidHttpUrl(updates.applyLink)) {
+      return sendError(res, 'Application link must be a valid http/https URL');
+    }
+    if (updates.applicationDeadline !== undefined) {
+      const parsedDeadline = parseDateField(updates.applicationDeadline);
+      if (!parsedDeadline.ok) return sendError(res, 'Invalid application deadline');
+      updates.applicationDeadline = parsedDeadline.value;
     }
     if (updates.type && !['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(updates.type)) {
       delete updates.type;
@@ -473,14 +510,24 @@ exports.createScholarship = async (req, res) => {
       return sendError(res, 'Title and organization are required');
     }
 
+    const sanitizedLink = link?.trim().slice(0, 500) || '';
+    if (sanitizedLink && !isValidHttpUrl(sanitizedLink)) {
+      return sendError(res, 'Scholarship link must be a valid http/https URL');
+    }
+
+    const parsedDeadline = parseDateField(deadline);
+    if (!parsedDeadline.ok) {
+      return sendError(res, 'Invalid scholarship deadline');
+    }
+
     const scholarship = new Scholarship({
       title: title.trim().slice(0, 200),
       organization: organization.trim().slice(0, 100),
       amount: amount?.trim().slice(0, 50) || '',
       eligibility: eligibility?.trim().slice(0, 1000) || '',
       description: description?.trim().slice(0, 5000) || '',
-      deadline: deadline ? new Date(deadline) : null,
-      link: link?.trim().slice(0, 500) || '',
+      deadline: parsedDeadline.value,
+      link: sanitizedLink,
       scholarshipImage: scholarshipImage?.trim().slice(0, 500) || null,
       postedBy: req.user._id
     });
@@ -510,6 +557,14 @@ exports.updateScholarship = async (req, res) => {
     // Sanitize string fields
     for (const key of ['title', 'organization', 'amount', 'eligibility', 'description', 'link', 'scholarshipImage']) {
       if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, key === 'description' ? 5000 : key === 'eligibility' ? 1000 : 500);
+    }
+    if (updates.link && !isValidHttpUrl(updates.link)) {
+      return sendError(res, 'Scholarship link must be a valid http/https URL');
+    }
+    if (updates.deadline !== undefined) {
+      const parsedDeadline = parseDateField(updates.deadline);
+      if (!parsedDeadline.ok) return sendError(res, 'Invalid scholarship deadline');
+      updates.deadline = parsedDeadline.value;
     }
 
     const updatedScholarship = await Scholarship.findByIdAndUpdate(id, updates, { new: true, runValidators: true })

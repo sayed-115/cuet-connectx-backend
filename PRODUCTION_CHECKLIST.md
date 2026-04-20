@@ -51,7 +51,6 @@
 
 #### Backend (Node.js)
 - **Render.com** (Free tier available)
-- **Railway.app**
 - **Heroku**
 - **DigitalOcean App Platform**
 

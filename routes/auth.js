@@ -87,7 +87,11 @@ router.post('/register', async (req, res) => {
         userId: String(user._id),
         email: user.email,
         error: emailErr.message,
-        sendgrid: emailErr?.response?.body?.errors || emailErr?.response?.body || null,
+        smtp: {
+          code: emailErr?.code || null,
+          command: emailErr?.command || null,
+          response: emailErr?.response || null,
+        },
       });
     }
 
@@ -268,7 +272,11 @@ router.post('/resend-verification', async (req, res) => {
         userId: String(user._id),
         email: user.email,
         error: emailErr.message,
-        sendgrid: emailErr?.response?.body?.errors || emailErr?.response?.body || null,
+        smtp: {
+          code: emailErr?.code || null,
+          command: emailErr?.command || null,
+          response: emailErr?.response || null,
+        },
       });
       return res.status(500).json({ success: false, message: 'Failed to send verification email. Please try again later.' });
     }
@@ -326,7 +334,11 @@ router.post('/forgot-password', async (req, res) => {
         userId: String(user._id),
         email: user.email,
         error: emailErr.message,
-        sendgrid: emailErr?.response?.body?.errors || emailErr?.response?.body || null,
+        smtp: {
+          code: emailErr?.code || null,
+          command: emailErr?.command || null,
+          response: emailErr?.response || null,
+        },
       });
       user.passwordResetToken = undefined;
       user.passwordResetExpires = undefined;

@@ -6,6 +6,14 @@ const { auth } = require('../middleware/auth');
 
 const normalize = (value) => String(value || '').toLowerCase().trim();
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const isValidHttpUrl = (value) => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch (_err) {
+    return false;
+  }
+};
 
 // Get all jobs (public)
 router.get('/', async (req, res) => {
@@ -122,11 +130,24 @@ router.get('/:id', async (req, res) => {
 // Create job (authenticated)
 router.post('/', auth, async (req, res) => {
   try {
-    const { title, company, location, type, description, requirements, salary, deadline, applyLink } = req.body;
+    const { title, company, location, type, description, requirements, responsibilities, experience, salary, deadline, applyLink } = req.body;
     
     // Validate required fields
     if (!title || !company || !description) {
       return res.status(400).json({ success: false, message: 'Title, company, and description are required' });
+    }
+
+    const sanitizedApplyLink = applyLink?.trim().slice(0, 500) || '';
+    if (sanitizedApplyLink && !isValidHttpUrl(sanitizedApplyLink)) {
+      return res.status(400).json({ success: false, message: 'Application link must be a valid http/https URL' });
+    }
+
+    let parsedDeadline = null;
+    if (deadline !== undefined && deadline !== null && String(deadline).trim() !== '') {
+      parsedDeadline = new Date(deadline);
+      if (Number.isNaN(parsedDeadline.getTime())) {
+        return res.status(400).json({ success: false, message: 'Invalid application deadline' });
+      }
     }
 
     // Sanitize inputs
@@ -136,14 +157,17 @@ router.post('/', auth, async (req, res) => {
       location: location?.trim().slice(0, 100) || '',
       type: ['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(type) ? type : 'Full-time',
       description: description.trim().slice(0, 5000),
-      requirements: Array.isArray(requirements) ? requirements.slice(0, 20) : [],
+      requirements: Array.isArray(requirements) ? requirements.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 20) : [],
+      responsibilities: Array.isArray(responsibilities) ? responsibilities.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 20) : [],
+      experience: typeof experience === 'string' ? experience.trim().slice(0, 100) : 'Entry Level',
       salary: salary || {},
-      applicationDeadline: deadline ? new Date(deadline) : null,
-      applyLink: applyLink?.trim().slice(0, 500) || '',
+      applicationDeadline: parsedDeadline,
+      applyLink: sanitizedApplyLink,
       postedBy: req.user._id
     });
 
     await job.save();
+    await job.populate('postedBy', 'fullName studentId profileImage role userType batch');
     res.status(201).json({ success: true, job, message: 'Job posted successfully' });
   } catch (error) {
     console.error('Create job error:', error);
@@ -165,7 +189,7 @@ router.put('/:id', auth, async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not authorized to update this job' });
     }
 
-    const allowedFields = ['title', 'company', 'location', 'type', 'description', 'requirements', 'salary', 'deadline', 'applyLink', 'isActive'];
+    const allowedFields = ['title', 'company', 'location', 'type', 'description', 'requirements', 'responsibilities', 'experience', 'salary', 'applicationDeadline', 'applyLink', 'isActive'];
     const updates = {};
     
     for (const field of allowedFields) {
@@ -174,15 +198,44 @@ router.put('/:id', auth, async (req, res) => {
       }
     }
 
+    if (req.body.deadline !== undefined) {
+      updates.applicationDeadline = req.body.deadline;
+    }
+
     // Sanitize string fields
-    for (const key of ['title', 'company', 'location', 'description', 'applyLink']) {
-      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, key === 'description' ? 5000 : 200);
+    const maxLengths = {
+      title: 200,
+      company: 100,
+      location: 100,
+      description: 5000,
+      applyLink: 500,
+      experience: 100,
+    };
+    for (const key of Object.keys(maxLengths)) {
+      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, maxLengths[key]);
+    }
+    if (updates.applyLink && !isValidHttpUrl(updates.applyLink)) {
+      return res.status(400).json({ success: false, message: 'Application link must be a valid http/https URL' });
     }
     if (updates.type && !['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(updates.type)) {
       delete updates.type;
     }
     if (updates.requirements && Array.isArray(updates.requirements)) {
-      updates.requirements = updates.requirements.slice(0, 20);
+      updates.requirements = updates.requirements.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 20);
+    }
+    if (updates.responsibilities && Array.isArray(updates.responsibilities)) {
+      updates.responsibilities = updates.responsibilities.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 20);
+    }
+    if (updates.applicationDeadline !== undefined) {
+      if (updates.applicationDeadline === null || String(updates.applicationDeadline).trim() === '') {
+        updates.applicationDeadline = null;
+      } else {
+        const parsed = new Date(updates.applicationDeadline);
+        if (Number.isNaN(parsed.getTime())) {
+          return res.status(400).json({ success: false, message: 'Invalid application deadline' });
+        }
+        updates.applicationDeadline = parsed;
+      }
     }
 
     const updatedJob = await Job.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
@@ -225,13 +278,19 @@ router.post('/:id/apply', auth, async (req, res) => {
     }
 
     // Check if already applied (prevent duplicates)
-    if (job.applicants?.includes(req.user._id)) {
+    const alreadyApplied = (job.applications || []).some((entry) => entry?.user?.toString() === req.user._id.toString());
+    if (alreadyApplied) {
       return res.status(400).json({ success: false, message: 'Already applied to this job' });
     }
 
-    await Job.findByIdAndUpdate(req.params.id, {
-      $addToSet: { applicants: req.user._id }
-    });
+    const applyResult = await Job.updateOne(
+      { _id: req.params.id, 'applications.user': { $ne: req.user._id } },
+      { $push: { applications: { user: req.user._id } } }
+    );
+
+    if (applyResult.modifiedCount === 0) {
+      return res.status(400).json({ success: false, message: 'Already applied to this job' });
+    }
 
     res.json({ success: true, message: 'Successfully applied to job' });
   } catch (error) {

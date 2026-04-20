@@ -6,6 +6,14 @@ const User = require('../models/User');
 
 const normalize = (value) => String(value || '').toLowerCase().trim();
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const isValidHttpUrl = (value) => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch (_err) {
+    return false;
+  }
+};
 
 // Get all scholarships (public)
 router.get('/', async (req, res) => {
@@ -154,7 +162,7 @@ router.get('/', async (req, res) => {
     const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
     const scholarships = await Scholarship.find(query)
-      .populate('postedBy', 'fullName studentId')
+      .populate('postedBy', 'fullName studentId role userType')
       .sort({ createdAt: -1 })
       .limit(safeLimit)
       .skip((safePage - 1) * safeLimit);
@@ -198,18 +206,32 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Title and organization are required' });
     }
 
+    const sanitizedLink = link?.trim().slice(0, 500) || '';
+    if (sanitizedLink && !isValidHttpUrl(sanitizedLink)) {
+      return res.status(400).json({ success: false, message: 'Scholarship link must be a valid http/https URL' });
+    }
+
+    let parsedDeadline = null;
+    if (deadline !== undefined && deadline !== null && String(deadline).trim() !== '') {
+      parsedDeadline = new Date(deadline);
+      if (Number.isNaN(parsedDeadline.getTime())) {
+        return res.status(400).json({ success: false, message: 'Invalid scholarship deadline' });
+      }
+    }
+
     const scholarship = new Scholarship({
       title: title.trim().slice(0, 200),
       organization: organization.trim().slice(0, 100),
       amount: amount?.trim().slice(0, 50) || '',
       eligibility: eligibility?.trim().slice(0, 1000) || '',
       description: description?.trim().slice(0, 5000) || '',
-      deadline: deadline ? new Date(deadline) : null,
-      link: link?.trim().slice(0, 500) || '',
+      deadline: parsedDeadline,
+      link: sanitizedLink,
       postedBy: req.user._id
     });
 
     await scholarship.save();
+    await scholarship.populate('postedBy', 'fullName studentId role userType');
     res.status(201).json({ success: true, scholarship, message: 'Scholarship posted successfully' });
   } catch (error) {
     console.error('Create scholarship error:', error);
@@ -241,8 +263,30 @@ router.put('/:id', auth, async (req, res) => {
     }
 
     // Sanitize string fields
-    for (const key of ['title', 'organization', 'amount', 'eligibility', 'description', 'link']) {
-      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, key === 'description' ? 5000 : key === 'eligibility' ? 1000 : 200);
+    const maxLengths = {
+      title: 200,
+      organization: 100,
+      amount: 50,
+      eligibility: 1000,
+      description: 5000,
+      link: 500,
+    };
+    for (const key of Object.keys(maxLengths)) {
+      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, maxLengths[key]);
+    }
+    if (updates.link && !isValidHttpUrl(updates.link)) {
+      return res.status(400).json({ success: false, message: 'Scholarship link must be a valid http/https URL' });
+    }
+    if (updates.deadline !== undefined) {
+      if (updates.deadline === null || String(updates.deadline).trim() === '') {
+        updates.deadline = null;
+      } else {
+        const parsed = new Date(updates.deadline);
+        if (Number.isNaN(parsed.getTime())) {
+          return res.status(400).json({ success: false, message: 'Invalid scholarship deadline' });
+        }
+        updates.deadline = parsed;
+      }
     }
 
     const updatedScholarship = await Scholarship.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });

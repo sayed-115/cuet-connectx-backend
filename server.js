@@ -18,11 +18,7 @@ const app = express();
 
 const asTrimmed = (value) => (value || '').trim();
 
-// Support both MONGODB_URI and DATABASE_URL (Railway-style naming)
-const DATABASE_URL = asTrimmed(process.env.MONGODB_URI) || asTrimmed(process.env.DATABASE_URL);
-if (DATABASE_URL) {
-  process.env.MONGODB_URI = DATABASE_URL;
-}
+const mongoUrl = asTrimmed(process.env.MONGODB_URI);
 
 const frontendUrl = asTrimmed(process.env.FRONTEND_URL);
 const corsFromEnv = asTrimmed(process.env.CORS_ORIGIN)
@@ -37,10 +33,10 @@ const allowedOrigins = Array.from(new Set([
 ]));
 
 const requiredRuntimeEnv = {
-  DATABASE_URL,
+  MONGODB_URI: mongoUrl,
   JWT_SECRET: asTrimmed(process.env.JWT_SECRET),
-  SENDGRID_API_KEY: asTrimmed(process.env.SENDGRID_API_KEY),
   EMAIL_USER: asTrimmed(process.env.EMAIL_USER),
+  EMAIL_PASS: asTrimmed(process.env.EMAIL_PASS),
   FRONTEND_URL: frontendUrl,
 };
 
@@ -84,12 +80,12 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
 // Connect to MongoDB
-if (!DATABASE_URL) {
-  console.error('❌ MongoDB connection string is missing. Set MONGODB_URI or DATABASE_URL.');
+if (!mongoUrl) {
+  console.error('❌ MongoDB connection string is missing. Set MONGODB_URI.');
   process.exit(1);
 }
 
-mongoose.connect(DATABASE_URL)
+mongoose.connect(mongoUrl)
   .then(async () => {
     console.log('✅ Connected to MongoDB');
     // One-time migration: mark pre-existing users (registered before email verification feature) as verified
@@ -125,18 +121,29 @@ app.use('/api/admin', adminRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({
+  const payload = {
     status: 'ok',
-    version: 8,
+    version: 9,
     message: 'CUET ConnectX API is running!',
+  };
+
+  if (process.env.NODE_ENV === 'production') {
+    return res.json(payload);
+  }
+
+  return res.json({
+    ...payload,
     config_status: {
-      DATABASE_URL: DATABASE_URL ? '✓ set' : '✗ MISSING',
-      JWT_SECRET: process.env.JWT_SECRET ? '✓ set' : '✗ MISSING',
-      EMAIL_USER: process.env.EMAIL_USER ? `✓ ${process.env.EMAIL_USER.trim()}` : '✗ MISSING',
-      SENDGRID_API_KEY: process.env.SENDGRID_API_KEY ? `✓ set (${process.env.SENDGRID_API_KEY.trim().substring(0, 5)}...)` : '✗ MISSING',
-      FRONTEND_URL: process.env.FRONTEND_URL ? `✓ ${process.env.FRONTEND_URL.trim()}` : '✗ MISSING (will default to localhost)',
-      CORS_ORIGIN: process.env.CORS_ORIGIN ? `✓ ${process.env.CORS_ORIGIN.trim()}` : '✗ MISSING',
-    }
+      MONGODB_URI: mongoUrl ? 'set' : 'missing',
+      JWT_SECRET: asTrimmed(process.env.JWT_SECRET) ? 'set' : 'missing',
+      EMAIL_USER: asTrimmed(process.env.EMAIL_USER) ? 'set' : 'missing',
+      EMAIL_PASS: asTrimmed(process.env.EMAIL_PASS) ? 'set' : 'missing',
+      SMTP_HOST: asTrimmed(process.env.SMTP_HOST) ? 'set' : 'default(smtp.gmail.com)',
+      SMTP_PORT: asTrimmed(process.env.SMTP_PORT) ? 'set' : 'default(587)',
+      SMTP_SECURE: asTrimmed(process.env.SMTP_SECURE) ? 'set' : 'default(false)',
+      FRONTEND_URL: frontendUrl ? 'set' : 'missing',
+      CORS_ORIGIN: corsFromEnv.length > 0 ? 'set' : 'missing',
+    },
   });
 });
 

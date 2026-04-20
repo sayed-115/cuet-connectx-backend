@@ -1,13 +1,13 @@
-const sgMail = require('@sendgrid/mail');
+const nodemailer = require('nodemailer');
 
-const SENDGRID_API_KEY = (process.env.SENDGRID_API_KEY || '').trim();
-if (SENDGRID_API_KEY) {
-  sgMail.setApiKey(SENDGRID_API_KEY);
-} else {
-  console.error('[Email] SENDGRID_API_KEY is missing. Email delivery will fail until it is configured.');
-}
-
+const SMTP_HOST = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+const SMTP_PORT = Number((process.env.SMTP_PORT || '587').trim());
+const SMTP_SECURE = (process.env.SMTP_SECURE || '').trim().toLowerCase() === 'true' || SMTP_PORT === 465;
 const FROM_EMAIL = (process.env.EMAIL_USER || '').trim();
+const EMAIL_PASS = (process.env.EMAIL_PASS || '').trim();
+const FROM_NAME = (process.env.EMAIL_FROM_NAME || 'CUET ConnectX').trim();
+
+let transporter = null;
 
 function getFrontendUrl() {
   const frontendUrl = (process.env.FRONTEND_URL || '').trim();
@@ -26,44 +26,68 @@ function tokenForLog(token) {
 
 function assertEmailConfig() {
   const missing = [];
-  if (!SENDGRID_API_KEY) missing.push('SENDGRID_API_KEY');
   if (!FROM_EMAIL) missing.push('EMAIL_USER');
+  if (!EMAIL_PASS) missing.push('EMAIL_PASS');
+  if (!Number.isFinite(SMTP_PORT)) missing.push('SMTP_PORT');
 
   if (missing.length > 0) {
     throw new Error(`[Email] Missing required email environment variables: ${missing.join(', ')}`);
   }
 }
 
+function getTransporter() {
+  if (transporter) return transporter;
+
+  transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: {
+      user: FROM_EMAIL,
+      pass: EMAIL_PASS,
+    },
+  });
+
+  return transporter;
+}
+
 async function sendWithLogging({ to, subject, html, flow, token }) {
   assertEmailConfig();
 
   try {
-    const [response] = await sgMail.send({
+    const response = await getTransporter().sendMail({
       to,
-      from: { email: FROM_EMAIL, name: 'CUET ConnectX' },
+      from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
       subject,
       html,
     });
 
-    const messageId = response?.headers?.['x-message-id'] || response?.headers?.['X-Message-Id'] || 'n/a';
-    console.log(`[Email][${flow}] SendGrid accepted email`, {
+    console.log(`[Email][${flow}] SMTP accepted email`, {
       to,
       from: FROM_EMAIL,
-      statusCode: response?.statusCode,
-      messageId,
+      smtpHost: SMTP_HOST,
+      smtpPort: SMTP_PORT,
+      secure: SMTP_SECURE,
+      accepted: response?.accepted || [],
+      rejected: response?.rejected || [],
+      response: response?.response || null,
+      messageId: response?.messageId || 'n/a',
       tokenPreview: tokenForLog(token),
     });
 
     return response;
   } catch (error) {
-    const sgErrors = error?.response?.body?.errors || error?.response?.body || null;
-    console.error(`[Email][${flow}] SendGrid send failed`, {
+    console.error(`[Email][${flow}] SMTP send failed`, {
       to,
       from: FROM_EMAIL,
+      smtpHost: SMTP_HOST,
+      smtpPort: SMTP_PORT,
+      secure: SMTP_SECURE,
       tokenPreview: tokenForLog(token),
       error: error.message,
-      statusCode: error?.code || error?.response?.statusCode,
-      sendgrid: sgErrors,
+      code: error?.code || null,
+      command: error?.command || null,
+      response: error?.response || null,
     });
     throw error;
   }

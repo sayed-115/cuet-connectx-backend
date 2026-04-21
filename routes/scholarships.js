@@ -1,22 +1,52 @@
 const express = require('express');
 const router = express.Router();
-const { auth } = require('../middleware/auth');
+
 const Scholarship = require('../models/Scholarship');
 const User = require('../models/User');
+const { auth, optionalAuth } = require('../middleware/auth');
+const isAdmin = require('../middleware/isAdmin');
+const {
+  normalizeScholarshipPayload,
+  parseDateField,
+  isValidHttpUrl,
+} = require('../utils/contentNormalization');
 
 const normalize = (value) => String(value || '').toLowerCase().trim();
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const isValidHttpUrl = (value) => {
+
+const APPROVAL_STATUSES = ['pending', 'approved', 'rejected'];
+
+const resolveOwnerId = (scholarship) =>
+  String(
+    scholarship?.createdBy?._id ||
+      scholarship?.createdBy ||
+      scholarship?.postedBy?._id ||
+      scholarship?.postedBy ||
+      ''
+  );
+
+const updateScholarshipStatus = (status, message) => async (req, res) => {
   try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch (_err) {
-    return false;
+    const { id } = req.params;
+    const scholarship = await Scholarship.findById(id);
+
+    if (!scholarship) {
+      return res.status(404).json({ success: false, message: 'Scholarship not found' });
+    }
+
+    scholarship.status = status;
+    await scholarship.save();
+    await scholarship.populate('postedBy', 'fullName studentId role userType profileImage batch');
+
+    return res.json({ success: true, message, scholarship });
+  } catch (error) {
+    console.error(`Scholarship ${status} error:`, error);
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
-// Get all scholarships (public)
-router.get('/', async (req, res) => {
+// Get all scholarships (public gets approved only, admin gets all)
+router.get('/', optionalAuth, async (req, res) => {
   try {
     const {
       limit = 20,
@@ -26,6 +56,7 @@ router.get('/', async (req, res) => {
       location,
       experience,
       role,
+      status,
     } = req.query;
 
     const filters = {
@@ -34,10 +65,17 @@ router.get('/', async (req, res) => {
       location: normalize(location),
       experience: normalize(experience),
       role: normalize(role),
+      status: normalize(status),
     };
 
-    const query = {};
+    const isAdminRequester = req.user?.role === 'admin';
     const andConditions = [];
+
+    if (!isAdminRequester) {
+      andConditions.push({ $or: [{ status: 'approved' }, { status: { $exists: false } }] });
+    } else if (filters.status && APPROVAL_STATUSES.includes(filters.status)) {
+      andConditions.push({ status: filters.status });
+    }
 
     if (filters.search) {
       const rx = { $regex: escapeRegex(filters.search), $options: 'i' };
@@ -84,10 +122,7 @@ router.get('/', async (req, res) => {
       } else {
         const rx = { $regex: escapeRegex(filters.type), $options: 'i' };
         andConditions.push({
-          $or: [
-            { amount: rx },
-            { description: rx },
-          ],
+          $or: [{ amount: rx }, { description: rx }],
         });
       }
     }
@@ -106,10 +141,11 @@ router.get('/', async (req, res) => {
 
     if (filters.experience) {
       let levelPattern = '';
+
       if (filters.experience === 'undergraduate') {
         levelPattern = 'undergraduate|bachelor|bsc|bs|honours|honors';
       } else if (filters.experience === "master's" || filters.experience === 'masters') {
-        levelPattern = "master|msc|ms";
+        levelPattern = 'master|msc|ms';
       } else if (filters.experience === 'phd') {
         levelPattern = 'phd|doctorate|doctoral';
       } else if (filters.experience === 'postdoc') {
@@ -130,193 +166,256 @@ router.get('/', async (req, res) => {
     if (filters.role) {
       const roleRegex = { $regex: `^${escapeRegex(filters.role)}$`, $options: 'i' };
       const matchingUsers = await User.find({
-        $or: [
-          { role: roleRegex },
-          { userType: roleRegex },
-        ],
+        $or: [{ role: roleRegex }, { userType: roleRegex }],
       }).select('_id');
 
       const userIds = matchingUsers.map((u) => u._id);
       if (userIds.length === 0) {
-        console.log('[Scholarships][filters]', filters);
-        console.log('[Scholarships][query]', query);
-        console.log('[Scholarships][response]', { count: 0, total: 0 });
         return res.json({
           success: true,
           scholarships: [],
-          pagination: { page: Math.max(parseInt(page, 10) || 1, 1), limit: Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100), total: 0 },
+          pagination: {
+            page: Math.max(parseInt(page, 10) || 1, 1),
+            limit: Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100),
+            total: 0,
+          },
         });
       }
 
-      andConditions.push({ postedBy: { $in: userIds } });
+      andConditions.push({
+        $or: [{ postedBy: { $in: userIds } }, { createdBy: { $in: userIds } }],
+      });
     }
 
-    if (andConditions.length > 0) {
-      query.$and = andConditions;
-    }
-
-    console.log('[Scholarships][filters]', filters);
-    console.log('[Scholarships][query]', query);
+    const query = andConditions.length > 0 ? { $and: andConditions } : {};
 
     const safePage = Math.max(parseInt(page, 10) || 1, 1);
     const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
-    const scholarships = await Scholarship.find(query)
-      .populate('postedBy', 'fullName studentId role userType')
-      .sort({ createdAt: -1 })
-      .limit(safeLimit)
-      .skip((safePage - 1) * safeLimit);
-    
-    const total = await Scholarship.countDocuments(query);
+    const [scholarships, total] = await Promise.all([
+      Scholarship.find(query)
+        .populate('postedBy', 'fullName studentId role userType profileImage batch')
+        .populate('createdBy', 'fullName studentId role userType profileImage batch')
+        .sort({ createdAt: -1 })
+        .limit(safeLimit)
+        .skip((safePage - 1) * safeLimit),
+      Scholarship.countDocuments(query),
+    ]);
 
-    console.log('[Scholarships][response]', { count: scholarships.length, total });
-    
-    res.json({ 
-      success: true, 
+    return res.json({
+      success: true,
       scholarships,
-      pagination: { page: safePage, limit: safeLimit, total }
+      pagination: { page: safePage, limit: safeLimit, total },
     });
   } catch (error) {
     console.error('Get scholarships error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
 // Get scholarship by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', optionalAuth, async (req, res) => {
   try {
     const scholarship = await Scholarship.findById(req.params.id)
-      .populate('postedBy', 'fullName studentId profileImage');
-    
+      .populate('postedBy', 'fullName studentId profileImage role userType batch')
+      .populate('createdBy', 'fullName studentId profileImage role userType batch');
+
     if (!scholarship) {
       return res.status(404).json({ success: false, message: 'Scholarship not found' });
     }
-    res.json({ success: true, scholarship });
+
+    const requesterId = req.user?._id?.toString();
+    const ownerId = resolveOwnerId(scholarship);
+    const canViewUnapproved = req.user?.role === 'admin' || (requesterId && requesterId === ownerId);
+    const moderationStatus = scholarship.status || 'approved';
+
+    if (moderationStatus !== 'approved' && !canViewUnapproved) {
+      return res.status(404).json({ success: false, message: 'Scholarship not found' });
+    }
+
+    return res.json({ success: true, scholarship });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error' });
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// Create scholarship (authenticated)
+// Create scholarship
 router.post('/', auth, async (req, res) => {
   try {
-    const { title, organization, amount, eligibility, description, deadline, link } = req.body;
-    
-    if (!title || !organization) {
-      return res.status(400).json({ success: false, message: 'Title and organization are required' });
+    const normalized = normalizeScholarshipPayload(req.body);
+
+    if (!normalized.title || !normalized.organization) {
+      return res.status(400).json({
+        success: false,
+        message: 'Title and organization are required',
+      });
     }
 
-    const sanitizedLink = link?.trim().slice(0, 500) || '';
-    if (sanitizedLink && !isValidHttpUrl(sanitizedLink)) {
-      return res.status(400).json({ success: false, message: 'Scholarship link must be a valid http/https URL' });
+    if (normalized.link && !isValidHttpUrl(normalized.link)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Scholarship link must be a valid http/https URL',
+      });
     }
 
-    let parsedDeadline = null;
-    if (deadline !== undefined && deadline !== null && String(deadline).trim() !== '') {
-      parsedDeadline = new Date(deadline);
-      if (Number.isNaN(parsedDeadline.getTime())) {
-        return res.status(400).json({ success: false, message: 'Invalid scholarship deadline' });
-      }
+    const parsedDeadline = parseDateField(normalized.deadline);
+    if (!parsedDeadline.ok) {
+      return res.status(400).json({ success: false, message: 'Invalid scholarship deadline' });
     }
+
+    const creatorRole = req.user.role === 'admin' ? 'admin' : 'user';
+    const moderationStatus = creatorRole === 'admin' ? 'approved' : 'pending';
 
     const scholarship = new Scholarship({
-      title: title.trim().slice(0, 200),
-      organization: organization.trim().slice(0, 100),
-      amount: amount?.trim().slice(0, 50) || '',
-      eligibility: eligibility?.trim().slice(0, 1000) || '',
-      description: description?.trim().slice(0, 5000) || '',
-      deadline: parsedDeadline,
-      link: sanitizedLink,
-      postedBy: req.user._id
+      title: normalized.title,
+      organization: normalized.organization,
+      amount: normalized.amount || '',
+      eligibility: normalized.eligibility || '',
+      description: normalized.description || '',
+      deadline: parsedDeadline.value,
+      link: normalized.link || '',
+      scholarshipImage: normalized.scholarshipImage || null,
+      postedBy: req.user._id,
+      createdBy: req.user._id,
+      role: creatorRole,
+      status: moderationStatus,
     });
 
     await scholarship.save();
-    await scholarship.populate('postedBy', 'fullName studentId role userType');
-    res.status(201).json({ success: true, scholarship, message: 'Scholarship posted successfully' });
+    await scholarship.populate('postedBy', 'fullName studentId role userType profileImage batch');
+    await scholarship.populate('createdBy', 'fullName studentId role userType profileImage batch');
+
+    return res.status(201).json({
+      success: true,
+      scholarship,
+      message:
+        moderationStatus === 'approved'
+          ? 'Scholarship posted successfully'
+          : 'Scholarship submitted for admin approval',
+    });
   } catch (error) {
     console.error('Create scholarship error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// Update scholarship (authenticated, owner only)
+// Update scholarship (admin or owner)
 router.put('/:id', auth, async (req, res) => {
   try {
     const scholarship = await Scholarship.findById(req.params.id);
-    
+
     if (!scholarship) {
       return res.status(404).json({ success: false, message: 'Scholarship not found' });
     }
 
-    // Check ownership
-    if (scholarship.postedBy?.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ success: false, message: 'Not authorized to update this scholarship' });
+    const ownerId = resolveOwnerId(scholarship);
+    const requesterId = req.user._id.toString();
+    const isAdminRequester = req.user.role === 'admin';
+    const isOwner = ownerId === requesterId;
+
+    if (!isAdminRequester && !isOwner) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update this scholarship',
+      });
     }
 
-    const allowedFields = ['title', 'organization', 'amount', 'eligibility', 'description', 'deadline', 'link'];
+    const normalized = normalizeScholarshipPayload(req.body, { partial: true });
     const updates = {};
-    
-    for (const field of allowedFields) {
-      if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
-      }
+
+    if (normalized.title !== undefined) {
+      if (!normalized.title) return res.status(400).json({ success: false, message: 'Title cannot be empty' });
+      updates.title = normalized.title;
     }
 
-    // Sanitize string fields
-    const maxLengths = {
-      title: 200,
-      organization: 100,
-      amount: 50,
-      eligibility: 1000,
-      description: 5000,
-      link: 500,
-    };
-    for (const key of Object.keys(maxLengths)) {
-      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, maxLengths[key]);
-    }
-    if (updates.link && !isValidHttpUrl(updates.link)) {
-      return res.status(400).json({ success: false, message: 'Scholarship link must be a valid http/https URL' });
-    }
-    if (updates.deadline !== undefined) {
-      if (updates.deadline === null || String(updates.deadline).trim() === '') {
-        updates.deadline = null;
-      } else {
-        const parsed = new Date(updates.deadline);
-        if (Number.isNaN(parsed.getTime())) {
-          return res.status(400).json({ success: false, message: 'Invalid scholarship deadline' });
-        }
-        updates.deadline = parsed;
+    if (normalized.organization !== undefined) {
+      if (!normalized.organization) {
+        return res.status(400).json({ success: false, message: 'Organization cannot be empty' });
       }
+      updates.organization = normalized.organization;
     }
 
-    const updatedScholarship = await Scholarship.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
-    res.json({ success: true, scholarship: updatedScholarship, message: 'Scholarship updated successfully' });
+    if (normalized.amount !== undefined) updates.amount = normalized.amount;
+    if (normalized.eligibility !== undefined) updates.eligibility = normalized.eligibility;
+    if (normalized.description !== undefined) updates.description = normalized.description;
+
+    if (normalized.link !== undefined) {
+      if (normalized.link && !isValidHttpUrl(normalized.link)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Scholarship link must be a valid http/https URL',
+        });
+      }
+      updates.link = normalized.link;
+    }
+
+    if (normalized.scholarshipImage !== undefined) {
+      updates.scholarshipImage = normalized.scholarshipImage || null;
+    }
+
+    if (normalized.deadline !== undefined) {
+      const parsedDeadline = parseDateField(normalized.deadline);
+      if (!parsedDeadline.ok) {
+        return res.status(400).json({ success: false, message: 'Invalid scholarship deadline' });
+      }
+      updates.deadline = parsedDeadline.value;
+    }
+
+    if (!isAdminRequester) {
+      updates.status = 'pending';
+      updates.role = 'user';
+    }
+
+    const updatedScholarship = await Scholarship.findByIdAndUpdate(req.params.id, updates, {
+      new: true,
+      runValidators: true,
+    })
+      .populate('postedBy', 'fullName studentId role userType profileImage batch')
+      .populate('createdBy', 'fullName studentId role userType profileImage batch');
+
+    return res.json({
+      success: true,
+      scholarship: updatedScholarship,
+      message: !isAdminRequester
+        ? 'Scholarship updated and resubmitted for approval'
+        : 'Scholarship updated successfully',
+    });
   } catch (error) {
     console.error('Update scholarship error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// Delete scholarship (authenticated, owner only)
+// Delete scholarship (admin any, user own)
 router.delete('/:id', auth, async (req, res) => {
   try {
     const scholarship = await Scholarship.findById(req.params.id);
-    
+
     if (!scholarship) {
       return res.status(404).json({ success: false, message: 'Scholarship not found' });
     }
 
-    // Check ownership
-    if (scholarship.postedBy?.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ success: false, message: 'Not authorized to delete this scholarship' });
+    const ownerId = resolveOwnerId(scholarship);
+    const requesterId = req.user._id.toString();
+    const isAdminRequester = req.user.role === 'admin';
+
+    if (!isAdminRequester && ownerId !== requesterId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete this scholarship',
+      });
     }
 
     await Scholarship.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: 'Scholarship deleted successfully' });
+    return res.json({ success: true, message: 'Scholarship deleted successfully' });
   } catch (error) {
     console.error('Delete scholarship error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
+
+// Moderation actions (admin only)
+router.put('/:id/approve', auth, isAdmin, updateScholarshipStatus('approved', 'Scholarship approved successfully'));
+router.put('/:id/reject', auth, isAdmin, updateScholarshipStatus('rejected', 'Scholarship rejected successfully'));
 
 module.exports = router;

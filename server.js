@@ -17,6 +17,13 @@ const adminRoutes = require('./routes/adminRoutes');
 const app = express();
 
 const asTrimmed = (value) => (value || '').trim();
+const getRouteDefinitions = (router, prefix) =>
+  (router.stack || [])
+    .filter((layer) => layer.route)
+    .map((layer) => ({
+      path: `${prefix}${layer.route.path}`,
+      methods: Object.keys(layer.route.methods || {}).map((method) => method.toUpperCase()),
+    }));
 
 const mongoUrl = asTrimmed(process.env.MONGODB_URI);
 
@@ -118,6 +125,18 @@ app.use('/api/jobs', jobRoutes);
 app.use('/api/scholarships', scholarshipRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/admin', adminRoutes);
+
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/api/debug/moderation-routes', (req, res) => {
+    const moderationRoutes = [
+      ...getRouteDefinitions(jobRoutes, '/api/jobs'),
+      ...getRouteDefinitions(scholarshipRoutes, '/api/scholarships'),
+      ...getRouteDefinitions(adminRoutes, '/api/admin'),
+    ].filter((route) => /\/(jobs|scholarships)\/:id\/(approve|reject)$/.test(route.path));
+
+    return res.json({ success: true, moderationRoutes });
+  });
+}
 
 // Health check
 app.get('/api/health', (req, res) => {

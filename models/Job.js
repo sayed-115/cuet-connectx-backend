@@ -20,6 +20,11 @@ const jobSchema = new mongoose.Schema({
     enum: ['Full-time', 'Part-time', 'Contract', 'Internship', 'Remote'],
     default: 'Full-time'
   },
+  workMode: {
+    type: String,
+    enum: ['Remote', 'On-site', 'Hybrid'],
+    default: 'On-site'
+  },
   salary: {
     min: { type: Number },
     max: { type: Number },
@@ -28,6 +33,10 @@ const jobSchema = new mongoose.Schema({
   description: {
     type: String,
     required: [true, 'Job description is required']
+  },
+  shortDescription: {
+    type: String,
+    default: ''
   },
   requirements: [{
     type: String
@@ -50,6 +59,20 @@ const jobSchema = new mongoose.Schema({
   },
   applyEmail: {
     type: String
+  },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  role: {
+    type: String,
+    enum: ['admin', 'user'],
+    default: 'user'
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending'
   },
   postedBy: {
     type: mongoose.Schema.Types.ObjectId,
@@ -79,5 +102,18 @@ const jobSchema = new mongoose.Schema({
 
 // Index for search
 jobSchema.index({ title: 'text', company: 'text', description: 'text', skills: 'text' });
+jobSchema.index({ status: 1, createdAt: -1 });
+
+jobSchema.pre('validate', function (next) {
+  if (!this.createdBy && this.postedBy) {
+    this.createdBy = this.postedBy;
+  }
+
+  if (!this.postedBy && this.createdBy) {
+    this.postedBy = this.createdBy;
+  }
+
+  next();
+});
 
 module.exports = mongoose.model('Job', jobSchema);

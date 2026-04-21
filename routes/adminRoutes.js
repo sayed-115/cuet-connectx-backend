@@ -29,12 +29,16 @@ router.post('/upload/post-image', postUpload.single('image'), adminController.up
 router.get('/jobs', adminController.getJobs);
 router.post('/jobs', adminController.createJob);
 router.put('/jobs/:id', adminController.updateJob);
+router.put('/jobs/:id/approve', adminController.approveJob);
+router.put('/jobs/:id/reject', adminController.rejectJob);
 router.delete('/jobs/:id', adminController.deleteJob);
 
 // Scholarships Management
 router.get('/scholarships', adminController.getScholarships);
 router.post('/scholarships', adminController.createScholarship);
 router.put('/scholarships/:id', adminController.updateScholarship);
+router.put('/scholarships/:id/approve', adminController.approveScholarship);
+router.put('/scholarships/:id/reject', adminController.rejectScholarship);
 router.delete('/scholarships/:id', adminController.deleteScholarship);
 
 // Community Moderation

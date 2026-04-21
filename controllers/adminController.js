@@ -3,10 +3,15 @@ const User = require('../models/User');
 const Job = require('../models/Job');
 const Post = require('../models/Post');
 const Scholarship = require('../models/Scholarship');
+const {
+  normalizeJobPayload,
+  normalizeScholarshipPayload,
+} = require('../utils/contentNormalization');
 
 // ── Constants ──────────────────────────────────────────────
 const ALLOWED_ROLES = ['student', 'alumni', 'admin'];
 const ALLOWED_STATUS = ['active', 'banned'];
+const CONTENT_STATUSES = ['pending', 'approved', 'rejected'];
 
 // ── Helpers ────────────────────────────────────────────────
 const sendSuccess = (res, message, data = {}, statusCode = 200) =>
@@ -33,6 +38,31 @@ const parseDateField = (value) => {
   return { ok: true, value: parsed };
 };
 
+const updateModerationStatus = async ({
+  res,
+  model,
+  id,
+  status,
+  notFoundMessage,
+  successMessage,
+  dataKey,
+  populate = [],
+}) => {
+  if (!isValidObjectId(id)) return sendError(res, `Invalid ${dataKey} id`);
+
+  const document = await model.findById(id);
+  if (!document) return sendError(res, notFoundMessage, 404);
+
+  document.status = status;
+  await document.save();
+
+  for (const { path, select } of populate) {
+    await document.populate(path, select);
+  }
+
+  return sendSuccess(res, successMessage, { [dataKey]: document });
+};
+
 // ── 1. Dashboard Overview ──────────────────────────────────
 exports.getDashboardOverview = async (req, res) => {
   try {
@@ -43,7 +73,13 @@ exports.getDashboardOverview = async (req, res) => {
       totalBannedUsers,
       totalAdmins,
       totalJobs,
+      pendingJobs,
+      approvedJobs,
+      rejectedJobs,
       totalScholarships,
+      pendingScholarships,
+      approvedScholarships,
+      rejectedScholarships,
       totalPosts,
       recentRegistrations
     ] = await Promise.all([
@@ -53,7 +89,13 @@ exports.getDashboardOverview = async (req, res) => {
       User.countDocuments({ status: 'banned' }),
       User.countDocuments({ role: 'admin' }),
       Job.countDocuments({}),
+      Job.countDocuments({ status: 'pending' }),
+      Job.countDocuments({ $or: [{ status: 'approved' }, { status: { $exists: false } }] }),
+      Job.countDocuments({ status: 'rejected' }),
       Scholarship.countDocuments({}),
+      Scholarship.countDocuments({ status: 'pending' }),
+      Scholarship.countDocuments({ $or: [{ status: 'approved' }, { status: { $exists: false } }] }),
+      Scholarship.countDocuments({ status: 'rejected' }),
       Post.countDocuments({}),
       User.find({})
         .sort({ createdAt: -1 })
@@ -68,7 +110,17 @@ exports.getDashboardOverview = async (req, res) => {
       totalBannedUsers,
       totalAdmins,
       totalJobs,
+      jobsByStatus: {
+        pending: pendingJobs,
+        approved: approvedJobs,
+        rejected: rejectedJobs,
+      },
       totalScholarships,
+      scholarshipsByStatus: {
+        pending: pendingScholarships,
+        approved: approvedScholarships,
+        rejected: rejectedScholarships,
+      },
       totalPosts,
       recentRegistrations
     });
@@ -320,14 +372,46 @@ exports.approveAlumni = async (req, res) => {
 // ── 8. Stats ───────────────────────────────────────────────
 exports.getStats = async (req, res) => {
   try {
-    const [totalUsers, totalJobs, totalScholarships, totalPosts] = await Promise.all([
+    const [
+      totalUsers,
+      totalJobs,
+      totalScholarships,
+      totalPosts,
+      pendingJobs,
+      approvedJobs,
+      rejectedJobs,
+      pendingScholarships,
+      approvedScholarships,
+      rejectedScholarships,
+    ] = await Promise.all([
       User.countDocuments({}),
       Job.countDocuments({}),
       Scholarship.countDocuments({}),
-      Post.countDocuments({})
+      Post.countDocuments({}),
+      Job.countDocuments({ status: 'pending' }),
+      Job.countDocuments({ $or: [{ status: 'approved' }, { status: { $exists: false } }] }),
+      Job.countDocuments({ status: 'rejected' }),
+      Scholarship.countDocuments({ status: 'pending' }),
+      Scholarship.countDocuments({ $or: [{ status: 'approved' }, { status: { $exists: false } }] }),
+      Scholarship.countDocuments({ status: 'rejected' }),
     ]);
 
-    return sendSuccess(res, 'Stats fetched', { totalUsers, totalJobs, totalScholarships, totalPosts });
+    return sendSuccess(res, 'Stats fetched', {
+      totalUsers,
+      totalJobs,
+      totalScholarships,
+      totalPosts,
+      jobsByStatus: {
+        pending: pendingJobs,
+        approved: approvedJobs,
+        rejected: rejectedJobs,
+      },
+      scholarshipsByStatus: {
+        pending: pendingScholarships,
+        approved: approvedScholarships,
+        rejected: rejectedScholarships,
+      },
+    });
   } catch (error) {
     console.error('Admin stats error:', error);
     return sendError(res, 'Server error', 500);
@@ -340,6 +424,7 @@ exports.getJobs = async (req, res) => {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
     const search = (req.query.search || '').trim();
+    const status = (req.query.status || '').trim().toLowerCase();
 
     const query = {};
     if (search) {
@@ -350,18 +435,39 @@ exports.getJobs = async (req, res) => {
       ];
     }
 
-    const [jobs, total] = await Promise.all([
+    if (status && CONTENT_STATUSES.includes(status)) {
+      query.status = status;
+    }
+
+    const [jobs, total, groupedStatusCounts] = await Promise.all([
       Job.find(query)
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
-        .populate('postedBy', 'fullName studentId profileImage'),
-      Job.countDocuments(query)
+        .populate('postedBy', 'fullName studentId profileImage role userType batch')
+        .populate('createdBy', 'fullName studentId profileImage role userType batch'),
+      Job.countDocuments(query),
+      Job.aggregate([
+        {
+          $group: {
+            _id: { $ifNull: ['$status', 'approved'] },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
     ]);
+
+    const statusCounts = { pending: 0, approved: 0, rejected: 0 };
+    groupedStatusCounts.forEach((entry) => {
+      if (CONTENT_STATUSES.includes(entry._id)) {
+        statusCounts[entry._id] = entry.count;
+      }
+    });
 
     return sendSuccess(res, 'Jobs fetched', {
       jobs,
-      pagination: { page, limit, total, pages: Math.ceil(total / limit) || 1 }
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) || 1 },
+      statusCounts,
     });
   } catch (error) {
     console.error('Admin get jobs error:', error);
@@ -371,34 +477,59 @@ exports.getJobs = async (req, res) => {
 
 exports.createJob = async (req, res) => {
   try {
-    const { title, company, location, type, description, requirements, salary, deadline, applyLink, jobImage } = req.body;
+    const normalized = normalizeJobPayload(req.body);
+
+    const title = normalized.title;
+    const company = normalized.company;
+    const description =
+      normalized.description ||
+      normalized.shortDescription ||
+      (normalized.requirements || []).join('. ') ||
+      (normalized.responsibilities || []).join('. ');
 
     if (!title || !company || !description) {
       return sendError(res, 'Title, company, and description are required');
     }
 
-    const sanitizedApplyLink = applyLink?.trim().slice(0, 500) || '';
+    const sanitizedApplyLink = normalized.applyLink || '';
     if (sanitizedApplyLink && !isValidHttpUrl(sanitizedApplyLink)) {
       return sendError(res, 'Application link must be a valid http/https URL');
     }
 
-    const parsedDeadline = parseDateField(deadline);
+    const parsedDeadline = parseDateField(normalized.applicationDeadline);
     if (!parsedDeadline.ok) {
       return sendError(res, 'Invalid application deadline');
     }
 
+    const resolvedType = ['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(normalized.type)
+      ? normalized.type
+      : 'Full-time';
+
+    const resolvedWorkMode = ['Remote', 'On-site', 'Hybrid'].includes(normalized.workMode)
+      ? normalized.workMode
+      : (String(normalized.location || '').toLowerCase().includes('remote') ? 'Remote' : 'On-site');
+
     const job = new Job({
-      title: title.trim().slice(0, 200),
-      company: company.trim().slice(0, 100),
-      location: location?.trim().slice(0, 100) || '',
-      type: ['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(type) ? type : 'Full-time',
-      description: description.trim().slice(0, 5000),
-      requirements: Array.isArray(requirements) ? requirements.slice(0, 20) : [],
-      salary: salary || {},
+      title,
+      company,
+      location: normalized.location || '',
+      type: resolvedType,
+      workMode: resolvedWorkMode,
+      description,
+      shortDescription: normalized.shortDescription || description.slice(0, 220),
+      requirements: normalized.requirements || [],
+      responsibilities: normalized.responsibilities || [],
+      skills: normalized.skills || [],
+      experience: normalized.experience || 'Entry Level',
+      salary: normalized.salary || {},
       applicationDeadline: parsedDeadline.value,
       applyLink: sanitizedApplyLink,
-      jobImage: jobImage?.trim().slice(0, 500) || null,
-      postedBy: req.user._id
+      applyEmail: normalized.applyEmail || '',
+      jobImage: normalized.jobImage || null,
+      postedBy: req.user._id,
+      createdBy: req.user._id,
+      role: 'admin',
+      status: 'approved',
     });
 
     await job.save();
@@ -417,33 +548,77 @@ exports.updateJob = async (req, res) => {
     const job = await Job.findById(id);
     if (!job) return sendError(res, 'Job not found', 404);
 
-    const allowedFields = ['title', 'company', 'location', 'type', 'description', 'requirements', 'salary', 'applicationDeadline', 'applyLink', 'isActive', 'jobImage'];
+    const normalized = normalizeJobPayload(req.body, { partial: true });
     const updates = {};
-    for (const field of allowedFields) {
-      if (req.body[field] !== undefined) updates[field] = req.body[field];
-    }
-    if (req.body.deadline !== undefined) {
-      updates.applicationDeadline = req.body.deadline;
+
+    if (normalized.title !== undefined) {
+      if (!normalized.title) return sendError(res, 'Title cannot be empty');
+      updates.title = normalized.title;
     }
 
-    // Sanitize string fields
-    for (const key of ['title', 'company', 'location', 'description', 'applyLink', 'jobImage']) {
-      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, key === 'description' ? 5000 : 500);
+    if (normalized.company !== undefined) {
+      if (!normalized.company) return sendError(res, 'Company cannot be empty');
+      updates.company = normalized.company;
     }
-    if (updates.applyLink && !isValidHttpUrl(updates.applyLink)) {
-      return sendError(res, 'Application link must be a valid http/https URL');
+
+    if (normalized.location !== undefined) updates.location = normalized.location;
+    if (normalized.type !== undefined) {
+      updates.type = ['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(normalized.type)
+        ? normalized.type
+        : 'Full-time';
     }
-    if (updates.applicationDeadline !== undefined) {
-      const parsedDeadline = parseDateField(updates.applicationDeadline);
+
+    if (normalized.workMode !== undefined || normalized.location !== undefined) {
+      const sourceMode = normalized.workMode !== undefined ? normalized.workMode : job.workMode;
+      const sourceLocation = normalized.location !== undefined ? normalized.location : job.location;
+      updates.workMode = ['Remote', 'On-site', 'Hybrid'].includes(sourceMode)
+        ? sourceMode
+        : (String(sourceLocation || '').toLowerCase().includes('remote') ? 'Remote' : 'On-site');
+    }
+
+    if (normalized.description !== undefined) {
+      if (!normalized.description) return sendError(res, 'Description cannot be empty');
+      updates.description = normalized.description;
+    }
+
+    if (normalized.shortDescription !== undefined) updates.shortDescription = normalized.shortDescription;
+    if (normalized.requirements !== undefined) updates.requirements = normalized.requirements;
+    if (normalized.responsibilities !== undefined) updates.responsibilities = normalized.responsibilities;
+    if (normalized.skills !== undefined) updates.skills = normalized.skills;
+    if (normalized.experience !== undefined) updates.experience = normalized.experience || 'Entry Level';
+    if (normalized.salary !== undefined) updates.salary = normalized.salary;
+
+    if (normalized.applyLink !== undefined) {
+      if (normalized.applyLink && !isValidHttpUrl(normalized.applyLink)) {
+        return sendError(res, 'Application link must be a valid http/https URL');
+      }
+      updates.applyLink = normalized.applyLink;
+    }
+
+    if (normalized.applyEmail !== undefined) updates.applyEmail = normalized.applyEmail;
+    if (normalized.jobImage !== undefined) updates.jobImage = normalized.jobImage || null;
+
+    if (normalized.applicationDeadline !== undefined) {
+      const parsedDeadline = parseDateField(normalized.applicationDeadline);
       if (!parsedDeadline.ok) return sendError(res, 'Invalid application deadline');
       updates.applicationDeadline = parsedDeadline.value;
     }
-    if (updates.type && !['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(updates.type)) {
-      delete updates.type;
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'isActive')) {
+      updates.isActive = Boolean(req.body.isActive);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'status') && CONTENT_STATUSES.includes(req.body.status)) {
+      updates.status = req.body.status;
+    }
+
+    if (updates.applyLink && !isValidHttpUrl(updates.applyLink)) {
+      return sendError(res, 'Application link must be a valid http/https URL');
     }
 
     const updatedJob = await Job.findByIdAndUpdate(id, updates, { new: true, runValidators: true })
-      .populate('postedBy', 'fullName studentId profileImage');
+      .populate('postedBy', 'fullName studentId profileImage role userType batch')
+      .populate('createdBy', 'fullName studentId profileImage role userType batch');
     return sendSuccess(res, 'Job updated successfully', { job: updatedJob });
   } catch (error) {
     console.error('Admin update job error:', error);
@@ -467,12 +642,55 @@ exports.deleteJob = async (req, res) => {
   }
 };
 
+exports.approveJob = async (req, res) => {
+  try {
+    return await updateModerationStatus({
+      res,
+      model: Job,
+      id: req.params.id,
+      status: 'approved',
+      notFoundMessage: 'Job not found',
+      successMessage: 'Job approved successfully',
+      dataKey: 'job',
+      populate: [
+        { path: 'postedBy', select: 'fullName studentId profileImage role userType batch' },
+        { path: 'createdBy', select: 'fullName studentId profileImage role userType batch' },
+      ],
+    });
+  } catch (error) {
+    console.error('Admin approve job error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+exports.rejectJob = async (req, res) => {
+  try {
+    return await updateModerationStatus({
+      res,
+      model: Job,
+      id: req.params.id,
+      status: 'rejected',
+      notFoundMessage: 'Job not found',
+      successMessage: 'Job rejected successfully',
+      dataKey: 'job',
+      populate: [
+        { path: 'postedBy', select: 'fullName studentId profileImage role userType batch' },
+        { path: 'createdBy', select: 'fullName studentId profileImage role userType batch' },
+      ],
+    });
+  } catch (error) {
+    console.error('Admin reject job error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
 // ── 10. Scholarships Management ───────────────────────────
 exports.getScholarships = async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
     const search = (req.query.search || '').trim();
+    const status = (req.query.status || '').trim().toLowerCase();
 
     const query = {};
     if (search) {
@@ -483,18 +701,39 @@ exports.getScholarships = async (req, res) => {
       ];
     }
 
-    const [scholarships, total] = await Promise.all([
+    if (status && CONTENT_STATUSES.includes(status)) {
+      query.status = status;
+    }
+
+    const [scholarships, total, groupedStatusCounts] = await Promise.all([
       Scholarship.find(query)
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
-        .populate('postedBy', 'fullName studentId'),
-      Scholarship.countDocuments(query)
+        .populate('postedBy', 'fullName studentId role userType profileImage batch')
+        .populate('createdBy', 'fullName studentId role userType profileImage batch'),
+      Scholarship.countDocuments(query),
+      Scholarship.aggregate([
+        {
+          $group: {
+            _id: { $ifNull: ['$status', 'approved'] },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
     ]);
+
+    const statusCounts = { pending: 0, approved: 0, rejected: 0 };
+    groupedStatusCounts.forEach((entry) => {
+      if (CONTENT_STATUSES.includes(entry._id)) {
+        statusCounts[entry._id] = entry.count;
+      }
+    });
 
     return sendSuccess(res, 'Scholarships fetched', {
       scholarships,
-      pagination: { page, limit, total, pages: Math.ceil(total / limit) || 1 }
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) || 1 },
+      statusCounts,
     });
   } catch (error) {
     console.error('Admin get scholarships error:', error);
@@ -504,32 +743,35 @@ exports.getScholarships = async (req, res) => {
 
 exports.createScholarship = async (req, res) => {
   try {
-    const { title, organization, amount, eligibility, description, deadline, link, scholarshipImage } = req.body;
+    const normalized = normalizeScholarshipPayload(req.body);
 
-    if (!title || !organization) {
+    if (!normalized.title || !normalized.organization) {
       return sendError(res, 'Title and organization are required');
     }
 
-    const sanitizedLink = link?.trim().slice(0, 500) || '';
+    const sanitizedLink = normalized.link || '';
     if (sanitizedLink && !isValidHttpUrl(sanitizedLink)) {
       return sendError(res, 'Scholarship link must be a valid http/https URL');
     }
 
-    const parsedDeadline = parseDateField(deadline);
+    const parsedDeadline = parseDateField(normalized.deadline);
     if (!parsedDeadline.ok) {
       return sendError(res, 'Invalid scholarship deadline');
     }
 
     const scholarship = new Scholarship({
-      title: title.trim().slice(0, 200),
-      organization: organization.trim().slice(0, 100),
-      amount: amount?.trim().slice(0, 50) || '',
-      eligibility: eligibility?.trim().slice(0, 1000) || '',
-      description: description?.trim().slice(0, 5000) || '',
+      title: normalized.title,
+      organization: normalized.organization,
+      amount: normalized.amount || '',
+      eligibility: normalized.eligibility || '',
+      description: normalized.description || '',
       deadline: parsedDeadline.value,
       link: sanitizedLink,
-      scholarshipImage: scholarshipImage?.trim().slice(0, 500) || null,
-      postedBy: req.user._id
+      scholarshipImage: normalized.scholarshipImage || null,
+      postedBy: req.user._id,
+      createdBy: req.user._id,
+      role: 'admin',
+      status: 'approved',
     });
 
     await scholarship.save();
@@ -548,27 +790,47 @@ exports.updateScholarship = async (req, res) => {
     const scholarship = await Scholarship.findById(id);
     if (!scholarship) return sendError(res, 'Scholarship not found', 404);
 
-    const allowedFields = ['title', 'organization', 'amount', 'eligibility', 'description', 'deadline', 'link', 'scholarshipImage'];
+    const normalized = normalizeScholarshipPayload(req.body, { partial: true });
     const updates = {};
-    for (const field of allowedFields) {
-      if (req.body[field] !== undefined) updates[field] = req.body[field];
+
+    if (normalized.title !== undefined) {
+      if (!normalized.title) return sendError(res, 'Title cannot be empty');
+      updates.title = normalized.title;
     }
 
-    // Sanitize string fields
-    for (const key of ['title', 'organization', 'amount', 'eligibility', 'description', 'link', 'scholarshipImage']) {
-      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, key === 'description' ? 5000 : key === 'eligibility' ? 1000 : 500);
+    if (normalized.organization !== undefined) {
+      if (!normalized.organization) return sendError(res, 'Organization cannot be empty');
+      updates.organization = normalized.organization;
     }
-    if (updates.link && !isValidHttpUrl(updates.link)) {
-      return sendError(res, 'Scholarship link must be a valid http/https URL');
+
+    if (normalized.amount !== undefined) updates.amount = normalized.amount;
+    if (normalized.eligibility !== undefined) updates.eligibility = normalized.eligibility;
+    if (normalized.description !== undefined) updates.description = normalized.description;
+
+    if (normalized.link !== undefined) {
+      if (normalized.link && !isValidHttpUrl(normalized.link)) {
+        return sendError(res, 'Scholarship link must be a valid http/https URL');
+      }
+      updates.link = normalized.link;
     }
-    if (updates.deadline !== undefined) {
-      const parsedDeadline = parseDateField(updates.deadline);
+
+    if (normalized.scholarshipImage !== undefined) {
+      updates.scholarshipImage = normalized.scholarshipImage || null;
+    }
+
+    if (normalized.deadline !== undefined) {
+      const parsedDeadline = parseDateField(normalized.deadline);
       if (!parsedDeadline.ok) return sendError(res, 'Invalid scholarship deadline');
       updates.deadline = parsedDeadline.value;
     }
 
+    if (Object.prototype.hasOwnProperty.call(req.body, 'status') && CONTENT_STATUSES.includes(req.body.status)) {
+      updates.status = req.body.status;
+    }
+
     const updatedScholarship = await Scholarship.findByIdAndUpdate(id, updates, { new: true, runValidators: true })
-      .populate('postedBy', 'fullName studentId');
+      .populate('postedBy', 'fullName studentId role userType profileImage batch')
+      .populate('createdBy', 'fullName studentId role userType profileImage batch');
     return sendSuccess(res, 'Scholarship updated successfully', { scholarship: updatedScholarship });
   } catch (error) {
     console.error('Admin update scholarship error:', error);
@@ -588,6 +850,48 @@ exports.deleteScholarship = async (req, res) => {
     return sendSuccess(res, 'Scholarship deleted successfully');
   } catch (error) {
     console.error('Admin delete scholarship error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+exports.approveScholarship = async (req, res) => {
+  try {
+    return await updateModerationStatus({
+      res,
+      model: Scholarship,
+      id: req.params.id,
+      status: 'approved',
+      notFoundMessage: 'Scholarship not found',
+      successMessage: 'Scholarship approved successfully',
+      dataKey: 'scholarship',
+      populate: [
+        { path: 'postedBy', select: 'fullName studentId role userType profileImage batch' },
+        { path: 'createdBy', select: 'fullName studentId role userType profileImage batch' },
+      ],
+    });
+  } catch (error) {
+    console.error('Admin approve scholarship error:', error);
+    return sendError(res, 'Server error', 500);
+  }
+};
+
+exports.rejectScholarship = async (req, res) => {
+  try {
+    return await updateModerationStatus({
+      res,
+      model: Scholarship,
+      id: req.params.id,
+      status: 'rejected',
+      notFoundMessage: 'Scholarship not found',
+      successMessage: 'Scholarship rejected successfully',
+      dataKey: 'scholarship',
+      populate: [
+        { path: 'postedBy', select: 'fullName studentId role userType profileImage batch' },
+        { path: 'createdBy', select: 'fullName studentId role userType profileImage batch' },
+      ],
+    });
+  } catch (error) {
+    console.error('Admin reject scholarship error:', error);
     return sendError(res, 'Server error', 500);
   }
 };

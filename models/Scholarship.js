@@ -8,9 +8,27 @@ const scholarshipSchema = new mongoose.Schema({
   description: { type: String, maxlength: 5000 },
   deadline: Date,
   link: { type: String, maxlength: 500 },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  role: { type: String, enum: ['admin', 'user'], default: 'user' },
+  status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
   postedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  scholarshipImage: { type: String },
-  createdAt: { type: Date, default: Date.now }
+  scholarshipImage: { type: String }
+}, {
+  timestamps: true
+});
+
+scholarshipSchema.index({ status: 1, createdAt: -1 });
+
+scholarshipSchema.pre('validate', function (next) {
+  if (!this.createdBy && this.postedBy) {
+    this.createdBy = this.postedBy;
+  }
+
+  if (!this.postedBy && this.createdBy) {
+    this.postedBy = this.createdBy;
+  }
+
+  next();
 });
 
 module.exports = mongoose.models.Scholarship || mongoose.model('Scholarship', scholarshipSchema);

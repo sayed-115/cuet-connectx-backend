@@ -1,22 +1,56 @@
 const express = require('express');
 const router = express.Router();
+
 const Job = require('../models/Job');
 const User = require('../models/User');
-const { auth } = require('../middleware/auth');
+const { auth, optionalAuth } = require('../middleware/auth');
+const isAdmin = require('../middleware/isAdmin');
+const {
+  normalizeJobPayload,
+  parseDateField,
+  isValidHttpUrl,
+} = require('../utils/contentNormalization');
 
 const normalize = (value) => String(value || '').toLowerCase().trim();
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const isValidHttpUrl = (value) => {
+
+const APPROVAL_STATUSES = ['pending', 'approved', 'rejected'];
+const VALID_JOB_TYPES = ['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'];
+const VALID_WORK_MODES = ['Remote', 'On-site', 'Hybrid'];
+
+const resolveOwnerId = (job) =>
+  String(job?.createdBy?._id || job?.createdBy || job?.postedBy?._id || job?.postedBy || '');
+
+const toWorkMode = (rawWorkMode = '', location = '') => {
+  if (VALID_WORK_MODES.includes(rawWorkMode)) return rawWorkMode;
+  if (normalize(location).includes('remote')) return 'Remote';
+  return 'On-site';
+};
+
+const toJobType = (rawType = '') => (VALID_JOB_TYPES.includes(rawType) ? rawType : 'Full-time');
+
+const updateJobStatus = (status, message) => async (req, res) => {
   try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch (_err) {
-    return false;
+    const { id } = req.params;
+    const job = await Job.findById(id);
+
+    if (!job) {
+      return res.status(404).json({ success: false, message: 'Job not found' });
+    }
+
+    job.status = status;
+    await job.save();
+    await job.populate('postedBy', 'fullName studentId profileImage role userType batch');
+
+    return res.json({ success: true, message, job });
+  } catch (error) {
+    console.error(`Job ${status} error:`, error);
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
-// Get all jobs (public)
-router.get('/', async (req, res) => {
+// Get all jobs (public gets approved only, admin gets all)
+router.get('/', optionalAuth, async (req, res) => {
   try {
     const {
       type,
@@ -24,6 +58,7 @@ router.get('/', async (req, res) => {
       search,
       experience,
       role,
+      status,
       limit = 20,
       page = 1,
     } = req.query;
@@ -34,251 +69,353 @@ router.get('/', async (req, res) => {
       location: normalize(location),
       experience: normalize(experience),
       role: normalize(role),
+      status: normalize(status),
     };
 
-    const query = { isActive: true };
+    const isAdminRequester = req.user?.role === 'admin';
+    const andConditions = [{ isActive: true }];
+
+    if (!isAdminRequester) {
+      andConditions.push({ $or: [{ status: 'approved' }, { status: { $exists: false } }] });
+    } else if (filters.status && APPROVAL_STATUSES.includes(filters.status)) {
+      andConditions.push({ status: filters.status });
+    }
 
     if (filters.type) {
-      query.type = { $regex: `^${escapeRegex(filters.type)}$`, $options: 'i' };
+      andConditions.push({ type: { $regex: `^${escapeRegex(filters.type)}$`, $options: 'i' } });
     }
 
     if (filters.location) {
-      query.location = { $regex: escapeRegex(filters.location), $options: 'i' };
+      andConditions.push({ location: { $regex: escapeRegex(filters.location), $options: 'i' } });
     }
 
     if (filters.experience) {
-      query.experience = { $regex: escapeRegex(filters.experience), $options: 'i' };
+      andConditions.push({ experience: { $regex: escapeRegex(filters.experience), $options: 'i' } });
     }
 
     if (filters.search) {
       const searchRegex = { $regex: escapeRegex(filters.search), $options: 'i' };
-      query.$or = [
-        { title: searchRegex },
-        { company: searchRegex },
-        { location: searchRegex },
-        { description: searchRegex },
-        { skills: searchRegex },
-      ];
+      andConditions.push({
+        $or: [
+          { title: searchRegex },
+          { company: searchRegex },
+          { location: searchRegex },
+          { description: searchRegex },
+          { shortDescription: searchRegex },
+          { skills: searchRegex },
+        ],
+      });
     }
 
     if (filters.role) {
       const roleRegex = { $regex: `^${escapeRegex(filters.role)}$`, $options: 'i' };
       const matchingUsers = await User.find({
-        $or: [
-          { role: roleRegex },
-          { userType: roleRegex },
-        ],
+        $or: [{ role: roleRegex }, { userType: roleRegex }],
       }).select('_id');
 
       const userIds = matchingUsers.map((u) => u._id);
       if (userIds.length === 0) {
-        console.log('[Jobs][filters]', filters);
-        console.log('[Jobs][query]', query);
-        console.log('[Jobs][response]', { count: 0, total: 0 });
         return res.json({
           success: true,
           jobs: [],
-          pagination: { page: Math.max(parseInt(page, 10) || 1, 1), limit: Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100), total: 0 },
+          pagination: {
+            page: Math.max(parseInt(page, 10) || 1, 1),
+            limit: Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100),
+            total: 0,
+          },
         });
       }
 
-      query.postedBy = { $in: userIds };
+      andConditions.push({
+        $or: [{ postedBy: { $in: userIds } }, { createdBy: { $in: userIds } }],
+      });
     }
 
-    console.log('[Jobs][filters]', filters);
-    console.log('[Jobs][query]', query);
+    const query = andConditions.length === 1 ? andConditions[0] : { $and: andConditions };
 
     const safePage = Math.max(parseInt(page, 10) || 1, 1);
     const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
-    const jobs = await Job.find(query)
-      .sort({ createdAt: -1 })
-      .limit(safeLimit)
-      .skip((safePage - 1) * safeLimit)
-      .populate('postedBy', 'fullName studentId profileImage role userType');
-    
-    const total = await Job.countDocuments(query);
+    const [jobs, total] = await Promise.all([
+      Job.find(query)
+        .sort({ createdAt: -1 })
+        .limit(safeLimit)
+        .skip((safePage - 1) * safeLimit)
+        .populate('postedBy', 'fullName studentId profileImage role userType batch')
+        .populate('createdBy', 'fullName studentId profileImage role userType batch'),
+      Job.countDocuments(query),
+    ]);
 
-    console.log('[Jobs][response]', { count: jobs.length, total });
-    
-    res.json({ 
-      success: true, 
+    return res.json({
+      success: true,
       jobs,
-      pagination: { page: safePage, limit: safeLimit, total }
+      pagination: { page: safePage, limit: safeLimit, total },
     });
   } catch (error) {
     console.error('Get jobs error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
 // Get job by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', optionalAuth, async (req, res) => {
   try {
     const job = await Job.findById(req.params.id)
-      .populate('postedBy', 'fullName studentId profileImage departmentShort batch');
-    
+      .populate('postedBy', 'fullName studentId profileImage departmentShort batch role userType')
+      .populate('createdBy', 'fullName studentId profileImage departmentShort batch role userType');
+
     if (!job) {
       return res.status(404).json({ success: false, message: 'Job not found' });
     }
-    res.json({ success: true, job });
+
+    const requesterId = req.user?._id?.toString();
+    const ownerId = resolveOwnerId(job);
+    const canViewUnapproved = req.user?.role === 'admin' || (requesterId && requesterId === ownerId);
+    const moderationStatus = job.status || 'approved';
+
+    if (moderationStatus !== 'approved' && !canViewUnapproved) {
+      return res.status(404).json({ success: false, message: 'Job not found' });
+    }
+
+    if (!job.isActive && !canViewUnapproved) {
+      return res.status(404).json({ success: false, message: 'Job not found' });
+    }
+
+    return res.json({ success: true, job });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error' });
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// Create job (authenticated)
+// Create job
 router.post('/', auth, async (req, res) => {
   try {
-    const { title, company, location, type, description, requirements, responsibilities, experience, salary, deadline, applyLink } = req.body;
-    
-    // Validate required fields
+    const normalized = normalizeJobPayload(req.body);
+
+    const title = normalized.title;
+    const company = normalized.company;
+    const description =
+      normalized.description ||
+      normalized.shortDescription ||
+      (normalized.requirements || []).join('. ') ||
+      (normalized.responsibilities || []).join('. ');
+
     if (!title || !company || !description) {
-      return res.status(400).json({ success: false, message: 'Title, company, and description are required' });
+      return res.status(400).json({
+        success: false,
+        message: 'Title, company, and description are required',
+      });
     }
 
-    const sanitizedApplyLink = applyLink?.trim().slice(0, 500) || '';
-    if (sanitizedApplyLink && !isValidHttpUrl(sanitizedApplyLink)) {
-      return res.status(400).json({ success: false, message: 'Application link must be a valid http/https URL' });
+    if (normalized.applyLink && !isValidHttpUrl(normalized.applyLink)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Application link must be a valid http/https URL',
+      });
     }
 
-    let parsedDeadline = null;
-    if (deadline !== undefined && deadline !== null && String(deadline).trim() !== '') {
-      parsedDeadline = new Date(deadline);
-      if (Number.isNaN(parsedDeadline.getTime())) {
-        return res.status(400).json({ success: false, message: 'Invalid application deadline' });
-      }
+    const parsedDeadline = parseDateField(normalized.applicationDeadline);
+    if (!parsedDeadline.ok) {
+      return res.status(400).json({ success: false, message: 'Invalid application deadline' });
     }
 
-    // Sanitize inputs
+    const creatorRole = req.user.role === 'admin' ? 'admin' : 'user';
+    const moderationStatus = creatorRole === 'admin' ? 'approved' : 'pending';
+
     const job = new Job({
-      title: title.trim().slice(0, 200),
-      company: company.trim().slice(0, 100),
-      location: location?.trim().slice(0, 100) || '',
-      type: ['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(type) ? type : 'Full-time',
-      description: description.trim().slice(0, 5000),
-      requirements: Array.isArray(requirements) ? requirements.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 20) : [],
-      responsibilities: Array.isArray(responsibilities) ? responsibilities.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 20) : [],
-      experience: typeof experience === 'string' ? experience.trim().slice(0, 100) : 'Entry Level',
-      salary: salary || {},
-      applicationDeadline: parsedDeadline,
-      applyLink: sanitizedApplyLink,
-      postedBy: req.user._id
+      title,
+      company,
+      location: normalized.location || '',
+      type: toJobType(normalized.type),
+      workMode: toWorkMode(normalized.workMode, normalized.location),
+      description,
+      shortDescription:
+        normalized.shortDescription ||
+        description.slice(0, 220),
+      requirements: normalized.requirements || [],
+      responsibilities: normalized.responsibilities || [],
+      skills: normalized.skills || [],
+      experience: normalized.experience || 'Entry Level',
+      salary: normalized.salary || {},
+      applicationDeadline: parsedDeadline.value,
+      applyLink: normalized.applyLink || '',
+      applyEmail: normalized.applyEmail || '',
+      jobImage: normalized.jobImage || null,
+      postedBy: req.user._id,
+      createdBy: req.user._id,
+      role: creatorRole,
+      status: moderationStatus,
     });
 
     await job.save();
     await job.populate('postedBy', 'fullName studentId profileImage role userType batch');
-    res.status(201).json({ success: true, job, message: 'Job posted successfully' });
+    await job.populate('createdBy', 'fullName studentId profileImage role userType batch');
+
+    return res.status(201).json({
+      success: true,
+      job,
+      message:
+        moderationStatus === 'approved'
+          ? 'Job posted successfully'
+          : 'Job submitted for admin approval',
+    });
   } catch (error) {
     console.error('Create job error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// Update job (authenticated, owner only)
+// Update job (admin or owner)
 router.put('/:id', auth, async (req, res) => {
   try {
     const job = await Job.findById(req.params.id);
-    
+
     if (!job) {
       return res.status(404).json({ success: false, message: 'Job not found' });
     }
 
-    // Check ownership
-    if (job.postedBy.toString() !== req.user._id.toString()) {
+    const ownerId = resolveOwnerId(job);
+    const requesterId = req.user._id.toString();
+    const isAdminRequester = req.user.role === 'admin';
+    const isOwner = ownerId === requesterId;
+
+    if (!isAdminRequester && !isOwner) {
       return res.status(403).json({ success: false, message: 'Not authorized to update this job' });
     }
 
-    const allowedFields = ['title', 'company', 'location', 'type', 'description', 'requirements', 'responsibilities', 'experience', 'salary', 'applicationDeadline', 'applyLink', 'isActive'];
+    const normalized = normalizeJobPayload(req.body, { partial: true });
     const updates = {};
-    
-    for (const field of allowedFields) {
-      if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
+
+    if (normalized.title !== undefined) {
+      if (!normalized.title) return res.status(400).json({ success: false, message: 'Title cannot be empty' });
+      updates.title = normalized.title;
+    }
+
+    if (normalized.company !== undefined) {
+      if (!normalized.company) return res.status(400).json({ success: false, message: 'Company cannot be empty' });
+      updates.company = normalized.company;
+    }
+
+    if (normalized.location !== undefined) updates.location = normalized.location;
+    if (normalized.type !== undefined) updates.type = toJobType(normalized.type);
+
+    if (normalized.workMode !== undefined || normalized.location !== undefined) {
+      const workModeSource = normalized.workMode !== undefined ? normalized.workMode : job.workMode;
+      const locationSource = normalized.location !== undefined ? normalized.location : job.location;
+      updates.workMode = toWorkMode(workModeSource, locationSource);
+    }
+
+    if (normalized.description !== undefined) {
+      if (!normalized.description) {
+        return res.status(400).json({ success: false, message: 'Description cannot be empty' });
       }
+      updates.description = normalized.description;
     }
 
-    if (req.body.deadline !== undefined) {
-      updates.applicationDeadline = req.body.deadline;
-    }
+    if (normalized.shortDescription !== undefined) updates.shortDescription = normalized.shortDescription;
+    if (normalized.requirements !== undefined) updates.requirements = normalized.requirements;
+    if (normalized.responsibilities !== undefined) updates.responsibilities = normalized.responsibilities;
+    if (normalized.skills !== undefined) updates.skills = normalized.skills;
+    if (normalized.experience !== undefined) updates.experience = normalized.experience || 'Entry Level';
+    if (normalized.salary !== undefined) updates.salary = normalized.salary;
 
-    // Sanitize string fields
-    const maxLengths = {
-      title: 200,
-      company: 100,
-      location: 100,
-      description: 5000,
-      applyLink: 500,
-      experience: 100,
-    };
-    for (const key of Object.keys(maxLengths)) {
-      if (typeof updates[key] === 'string') updates[key] = updates[key].trim().slice(0, maxLengths[key]);
-    }
-    if (updates.applyLink && !isValidHttpUrl(updates.applyLink)) {
-      return res.status(400).json({ success: false, message: 'Application link must be a valid http/https URL' });
-    }
-    if (updates.type && !['Full-time', 'Part-time', 'Internship', 'Contract', 'Remote'].includes(updates.type)) {
-      delete updates.type;
-    }
-    if (updates.requirements && Array.isArray(updates.requirements)) {
-      updates.requirements = updates.requirements.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 20);
-    }
-    if (updates.responsibilities && Array.isArray(updates.responsibilities)) {
-      updates.responsibilities = updates.responsibilities.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 20);
-    }
-    if (updates.applicationDeadline !== undefined) {
-      if (updates.applicationDeadline === null || String(updates.applicationDeadline).trim() === '') {
-        updates.applicationDeadline = null;
-      } else {
-        const parsed = new Date(updates.applicationDeadline);
-        if (Number.isNaN(parsed.getTime())) {
-          return res.status(400).json({ success: false, message: 'Invalid application deadline' });
-        }
-        updates.applicationDeadline = parsed;
+    if (normalized.applyLink !== undefined) {
+      if (normalized.applyLink && !isValidHttpUrl(normalized.applyLink)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Application link must be a valid http/https URL',
+        });
       }
+      updates.applyLink = normalized.applyLink;
     }
 
-    const updatedJob = await Job.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
-    res.json({ success: true, job: updatedJob, message: 'Job updated successfully' });
+    if (normalized.applyEmail !== undefined) updates.applyEmail = normalized.applyEmail;
+    if (normalized.jobImage !== undefined) updates.jobImage = normalized.jobImage || null;
+
+    if (normalized.applicationDeadline !== undefined) {
+      const parsedDeadline = parseDateField(normalized.applicationDeadline);
+      if (!parsedDeadline.ok) {
+        return res.status(400).json({ success: false, message: 'Invalid application deadline' });
+      }
+      updates.applicationDeadline = parsedDeadline.value;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'isActive')) {
+      updates.isActive = Boolean(req.body.isActive);
+    }
+
+    if (!isAdminRequester) {
+      updates.status = 'pending';
+      updates.role = 'user';
+    }
+
+    const updatedJob = await Job.findByIdAndUpdate(req.params.id, updates, {
+      new: true,
+      runValidators: true,
+    })
+      .populate('postedBy', 'fullName studentId profileImage role userType batch')
+      .populate('createdBy', 'fullName studentId profileImage role userType batch');
+
+    return res.json({
+      success: true,
+      job: updatedJob,
+      message: !isAdminRequester
+        ? 'Job updated and resubmitted for approval'
+        : 'Job updated successfully',
+    });
   } catch (error) {
     console.error('Update job error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// Delete job (authenticated, owner only)
+// Delete job (admin any, user own)
 router.delete('/:id', auth, async (req, res) => {
   try {
     const job = await Job.findById(req.params.id);
-    
+
     if (!job) {
       return res.status(404).json({ success: false, message: 'Job not found' });
     }
 
-    // Check ownership
-    if (job.postedBy.toString() !== req.user._id.toString()) {
+    const ownerId = resolveOwnerId(job);
+    const requesterId = req.user._id.toString();
+    const isAdminRequester = req.user.role === 'admin';
+
+    if (!isAdminRequester && ownerId !== requesterId) {
       return res.status(403).json({ success: false, message: 'Not authorized to delete this job' });
     }
 
     await Job.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: 'Job deleted successfully' });
+    return res.json({ success: true, message: 'Job deleted successfully' });
   } catch (error) {
     console.error('Delete job error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// Apply to job (authenticated)
+// Moderation actions (admin only)
+router.put('/:id/approve', auth, isAdmin, updateJobStatus('approved', 'Job approved successfully'));
+router.put('/:id/reject', auth, isAdmin, updateJobStatus('rejected', 'Job rejected successfully'));
+
+// Apply to job
 router.post('/:id/apply', auth, async (req, res) => {
   try {
     const job = await Job.findById(req.params.id);
-    
+
     if (!job) {
       return res.status(404).json({ success: false, message: 'Job not found' });
     }
 
-    // Check if already applied (prevent duplicates)
-    const alreadyApplied = (job.applications || []).some((entry) => entry?.user?.toString() === req.user._id.toString());
+    const moderationStatus = job.status || 'approved';
+    if (!job.isActive || moderationStatus !== 'approved') {
+      return res.status(400).json({ success: false, message: 'Job is not open for applications' });
+    }
+
+    const alreadyApplied = (job.applications || []).some(
+      (entry) => entry?.user?.toString() === req.user._id.toString()
+    );
+
     if (alreadyApplied) {
       return res.status(400).json({ success: false, message: 'Already applied to this job' });
     }
@@ -292,10 +429,10 @@ router.post('/:id/apply', auth, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Already applied to this job' });
     }
 
-    res.json({ success: true, message: 'Successfully applied to job' });
+    return res.json({ success: true, message: 'Successfully applied to job' });
   } catch (error) {
     console.error('Apply job error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 

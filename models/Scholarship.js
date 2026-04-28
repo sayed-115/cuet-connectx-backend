@@ -29,4 +29,4 @@ scholarshipSchema.pre('validate', function () {
   }
 });
 
-module.exports = mongoose.models.Scholarship || mongoose.model('Scholarship', scholarshipSchema);
+module.exports = mongoose.model('Scholarship', scholarshipSchema);

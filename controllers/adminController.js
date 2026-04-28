@@ -64,66 +64,64 @@ const updateModerationStatus = async ({
   return sendSuccess(res, successMessage, { [dataKey]: document });
 };
 
+// ── Shared Stats Helper ────────────────────────────────────
+const _fetchCoreStats = async () => {
+  const [
+    totalUsers,
+    totalJobs,
+    totalScholarships,
+    totalPosts,
+    pendingJobs,
+    approvedJobs,
+    rejectedJobs,
+    pendingScholarships,
+    approvedScholarships,
+    rejectedScholarships,
+  ] = await Promise.all([
+    User.countDocuments({}),
+    Job.countDocuments({}),
+    Scholarship.countDocuments({}),
+    Post.countDocuments({}),
+    Job.countDocuments({ status: 'pending' }),
+    Job.countDocuments({ $or: [{ status: 'approved' }, { status: { $exists: false } }] }),
+    Job.countDocuments({ status: 'rejected' }),
+    Scholarship.countDocuments({ status: 'pending' }),
+    Scholarship.countDocuments({ $or: [{ status: 'approved' }, { status: { $exists: false } }] }),
+    Scholarship.countDocuments({ status: 'rejected' }),
+  ]);
+
+  return {
+    totalUsers,
+    totalJobs,
+    totalScholarships,
+    totalPosts,
+    jobsByStatus: { pending: pendingJobs, approved: approvedJobs, rejected: rejectedJobs },
+    scholarshipsByStatus: { pending: pendingScholarships, approved: approvedScholarships, rejected: rejectedScholarships },
+  };
+};
+
 // ── 1. Dashboard Overview ──────────────────────────────────
 exports.getDashboardOverview = async (req, res) => {
   try {
-    const [
-      totalUsers,
-      totalAlumni,
-      totalStudents,
-      totalBannedUsers,
-      totalAdmins,
-      totalJobs,
-      pendingJobs,
-      approvedJobs,
-      rejectedJobs,
-      totalScholarships,
-      pendingScholarships,
-      approvedScholarships,
-      rejectedScholarships,
-      totalPosts,
-      recentRegistrations
-    ] = await Promise.all([
-      User.countDocuments({}),
+    const [coreStats, totalAlumni, totalStudents, totalBannedUsers, totalAdmins, recentRegistrations] = await Promise.all([
+      _fetchCoreStats(),
       User.countDocuments({ role: 'alumni' }),
       User.countDocuments({ role: 'student' }),
       User.countDocuments({ status: 'banned' }),
       User.countDocuments({ role: 'admin' }),
-      Job.countDocuments({}),
-      Job.countDocuments({ status: 'pending' }),
-      Job.countDocuments({ $or: [{ status: 'approved' }, { status: { $exists: false } }] }),
-      Job.countDocuments({ status: 'rejected' }),
-      Scholarship.countDocuments({}),
-      Scholarship.countDocuments({ status: 'pending' }),
-      Scholarship.countDocuments({ $or: [{ status: 'approved' }, { status: { $exists: false } }] }),
-      Scholarship.countDocuments({ status: 'rejected' }),
-      Post.countDocuments({}),
       User.find({})
         .sort({ createdAt: -1 })
         .limit(5)
-        .select('fullName email studentId role status userType profileImage createdAt')
+        .select('fullName email studentId role status userType profileImage createdAt'),
     ]);
 
     return sendSuccess(res, 'Dashboard overview fetched', {
-      totalUsers,
+      ...coreStats,
       totalAlumni,
       totalStudents,
       totalBannedUsers,
       totalAdmins,
-      totalJobs,
-      jobsByStatus: {
-        pending: pendingJobs,
-        approved: approvedJobs,
-        rejected: rejectedJobs,
-      },
-      totalScholarships,
-      scholarshipsByStatus: {
-        pending: pendingScholarships,
-        approved: approvedScholarships,
-        rejected: rejectedScholarships,
-      },
-      totalPosts,
-      recentRegistrations
+      recentRegistrations,
     });
   } catch (error) {
     console.error('Admin dashboard error:', error);
@@ -373,46 +371,8 @@ exports.approveAlumni = async (req, res) => {
 // ── 8. Stats ───────────────────────────────────────────────
 exports.getStats = async (req, res) => {
   try {
-    const [
-      totalUsers,
-      totalJobs,
-      totalScholarships,
-      totalPosts,
-      pendingJobs,
-      approvedJobs,
-      rejectedJobs,
-      pendingScholarships,
-      approvedScholarships,
-      rejectedScholarships,
-    ] = await Promise.all([
-      User.countDocuments({}),
-      Job.countDocuments({}),
-      Scholarship.countDocuments({}),
-      Post.countDocuments({}),
-      Job.countDocuments({ status: 'pending' }),
-      Job.countDocuments({ $or: [{ status: 'approved' }, { status: { $exists: false } }] }),
-      Job.countDocuments({ status: 'rejected' }),
-      Scholarship.countDocuments({ status: 'pending' }),
-      Scholarship.countDocuments({ $or: [{ status: 'approved' }, { status: { $exists: false } }] }),
-      Scholarship.countDocuments({ status: 'rejected' }),
-    ]);
-
-    return sendSuccess(res, 'Stats fetched', {
-      totalUsers,
-      totalJobs,
-      totalScholarships,
-      totalPosts,
-      jobsByStatus: {
-        pending: pendingJobs,
-        approved: approvedJobs,
-        rejected: rejectedJobs,
-      },
-      scholarshipsByStatus: {
-        pending: pendingScholarships,
-        approved: approvedScholarships,
-        rejected: rejectedScholarships,
-      },
-    });
+    const stats = await _fetchCoreStats();
+    return sendSuccess(res, 'Stats fetched', stats);
   } catch (error) {
     console.error('Admin stats error:', error);
     return sendError(res, 'Server error', 500);

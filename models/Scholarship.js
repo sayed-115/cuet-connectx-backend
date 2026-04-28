@@ -19,7 +19,7 @@ const scholarshipSchema = new mongoose.Schema({
 
 scholarshipSchema.index({ status: 1, createdAt: -1 });
 
-scholarshipSchema.pre('validate', function (next) {
+scholarshipSchema.pre('validate', function () {
   if (!this.createdBy && this.postedBy) {
     this.createdBy = this.postedBy;
   }
@@ -27,8 +27,6 @@ scholarshipSchema.pre('validate', function (next) {
   if (!this.postedBy && this.createdBy) {
     this.postedBy = this.createdBy;
   }
-
-  next();
 });
 
 module.exports = mongoose.models.Scholarship || mongoose.model('Scholarship', scholarshipSchema);

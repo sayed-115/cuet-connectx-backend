@@ -32,14 +32,16 @@ const toJobType = (rawType = '') => (VALID_JOB_TYPES.includes(rawType) ? rawType
 const updateJobStatus = (status, message) => async (req, res) => {
   try {
     const { id } = req.params;
-    const job = await Job.findById(id);
+    const job = await Job.findByIdAndUpdate(
+      id,
+      { $set: { status } },
+      { new: true, runValidators: true }
+    );
 
     if (!job) {
       return res.status(404).json({ success: false, message: 'Job not found' });
     }
 
-    job.status = status;
-    await job.save();
     await job.populate('postedBy', 'fullName studentId profileImage role userType batch');
 
     return res.json({ success: true, message, job });

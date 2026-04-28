@@ -28,14 +28,16 @@ const resolveOwnerId = (scholarship) =>
 const updateScholarshipStatus = (status, message) => async (req, res) => {
   try {
     const { id } = req.params;
-    const scholarship = await Scholarship.findById(id);
+    const scholarship = await Scholarship.findByIdAndUpdate(
+      id,
+      { $set: { status } },
+      { new: true, runValidators: true }
+    );
 
     if (!scholarship) {
       return res.status(404).json({ success: false, message: 'Scholarship not found' });
     }
 
-    scholarship.status = status;
-    await scholarship.save();
     await scholarship.populate('postedBy', 'fullName studentId role userType profileImage batch');
 
     return res.json({ success: true, message, scholarship });

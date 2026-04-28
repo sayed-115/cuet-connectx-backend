@@ -50,11 +50,12 @@ const updateModerationStatus = async ({
 }) => {
   if (!isValidObjectId(id)) return sendError(res, `Invalid ${dataKey} id`);
 
-  const document = await model.findById(id);
+  const document = await model.findByIdAndUpdate(
+    id,
+    { $set: { status } },
+    { new: true, runValidators: true }
+  );
   if (!document) return sendError(res, notFoundMessage, 404);
-
-  document.status = status;
-  await document.save();
 
   for (const { path, select } of populate) {
     await document.populate(path, select);

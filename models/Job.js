@@ -104,14 +104,4 @@ const jobSchema = new mongoose.Schema({
 jobSchema.index({ title: 'text', company: 'text', description: 'text', skills: 'text' });
 jobSchema.index({ status: 1, createdAt: -1 });
 
-jobSchema.pre('validate', function () {
-  if (!this.createdBy && this.postedBy) {
-    this.createdBy = this.postedBy;
-  }
-
-  if (!this.postedBy && this.createdBy) {
-    this.postedBy = this.createdBy;
-  }
-});
-
 module.exports = mongoose.model('Job', jobSchema);

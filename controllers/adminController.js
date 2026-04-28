@@ -14,11 +14,9 @@ const ALLOWED_STATUS = ['active', 'banned'];
 const CONTENT_STATUSES = ['pending', 'approved', 'rejected'];
 
 // ── Helpers ────────────────────────────────────────────────
-const sendSuccess = (res, message, data = {}, statusCode = 200) =>
-  res.status(statusCode).json({ success: true, message, data });
+const { sendSuccess, sendError } = require('../utils/response');
 
-const sendError = (res, message, statusCode = 400) =>
-  res.status(statusCode).json({ success: false, message });
+
 
 const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 const isValidHttpUrl = (value) => {

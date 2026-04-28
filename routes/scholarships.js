@@ -10,6 +10,8 @@ const {
   parseDateField,
   isValidHttpUrl,
 } = require('../utils/contentNormalization');
+const { validateCreateScholarship } = require('../middleware/validate');
+const { mutationLimiter } = require('../middleware/rateLimiter');
 
 const normalize = (value) => String(value || '').toLowerCase().trim();
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -242,7 +244,7 @@ router.get('/:id', optionalAuth, async (req, res) => {
 });
 
 // Create scholarship
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, mutationLimiter, validateCreateScholarship, async (req, res) => {
   try {
     const normalized = normalizeScholarshipPayload(req.body);
 

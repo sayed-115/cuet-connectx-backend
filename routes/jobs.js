@@ -10,6 +10,8 @@ const {
   parseDateField,
   isValidHttpUrl,
 } = require('../utils/contentNormalization');
+const { validateCreateJob } = require('../middleware/validate');
+const { mutationLimiter } = require('../middleware/rateLimiter');
 
 const normalize = (value) => String(value || '').toLowerCase().trim();
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -190,7 +192,7 @@ router.get('/:id', optionalAuth, async (req, res) => {
 });
 
 // Create job
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, mutationLimiter, validateCreateJob, async (req, res) => {
   try {
     const normalized = normalizeJobPayload(req.body);
 

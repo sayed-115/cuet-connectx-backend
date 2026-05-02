@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const dns = require('dns');
 
 const SMTP_HOST = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
 const SMTP_PORT = Number((process.env.SMTP_PORT || '587').trim());
@@ -6,8 +7,32 @@ const SMTP_SECURE = (process.env.SMTP_SECURE || '').trim().toLowerCase() === 'tr
 const FROM_EMAIL = (process.env.EMAIL_USER || '').trim();
 const EMAIL_PASS = (process.env.EMAIL_PASS || '').trim();
 const FROM_NAME = (process.env.EMAIL_FROM_NAME || 'CUET ConnectX').trim();
+const EMAIL_SEND_TIMEOUT_MS_RAW = Number((process.env.EMAIL_SEND_TIMEOUT_MS || '12000').trim());
+
+const SMTP_PORTS_COMMONLY_BLOCKED_ON_FREE_HOSTING = new Set([25, 465, 587]);
 
 let transporter = null;
+
+function getEmailTimeoutMs() {
+  if (Number.isFinite(EMAIL_SEND_TIMEOUT_MS_RAW) && EMAIL_SEND_TIMEOUT_MS_RAW >= 1000) {
+    return EMAIL_SEND_TIMEOUT_MS_RAW;
+  }
+  return 12000;
+}
+
+function isLikelyRenderSmtpRestriction(error) {
+  const runningOnRender = Boolean(
+    process.env.RENDER ||
+    process.env.RENDER_SERVICE_ID ||
+    process.env.RENDER_INSTANCE_ID
+  );
+  if (!runningOnRender) return false;
+
+  if (!SMTP_PORTS_COMMONLY_BLOCKED_ON_FREE_HOSTING.has(SMTP_PORT)) return false;
+
+  const code = error?.code || '';
+  return ['ETIMEDOUT', 'ESOCKET', 'ENETUNREACH', 'EHOSTUNREACH', 'ECONNREFUSED'].includes(code);
+}
 
 function getFrontendUrl() {
   const frontendUrl = (process.env.FRONTEND_URL || '').trim();
@@ -38,6 +63,7 @@ function assertEmailConfig() {
 function getTransporter() {
   if (transporter) return transporter;
 
+  const timeoutMs = getEmailTimeoutMs();
   const config = {
     host: SMTP_HOST,
     port: SMTP_PORT,
@@ -46,19 +72,23 @@ function getTransporter() {
       user: FROM_EMAIL,
       pass: EMAIL_PASS,
     },
-    // CRITICAL: This fixes the ENETUNREACH error.
-    // It forces the connection to use IPv4 instead of the failing IPv6.
-    family: 4,
-    // Optimal for cloud environments to prevent connection drops
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
+    // Force IPv4 lookup first to avoid broken IPv6 routes in some cloud runtimes.
+    lookup: (hostname, options, callback) => {
+      const normalizedOptions = typeof options === 'function' ? {} : (options || {});
+      const normalizedCallback = typeof options === 'function' ? options : callback;
+      return dns.lookup(hostname, { ...normalizedOptions, family: 4, all: false }, normalizedCallback);
+    },
+    connectionTimeout: timeoutMs,
+    greetingTimeout: timeoutMs,
+    socketTimeout: timeoutMs,
+    dnsTimeout: 5000,
   };
 
-  // Log the configuration attempt (excluding password)
-  console.log(`[Email] Initializing SMTP with Host: ${SMTP_HOST}, Port: ${SMTP_PORT}, Secure: ${SMTP_SECURE}`);
+  console.log(
+    `[Email] Initializing SMTP with Host: ${SMTP_HOST}, Port: ${SMTP_PORT}, Secure: ${SMTP_SECURE}, TimeoutMs: ${timeoutMs}`
+  );
 
   transporter = nodemailer.createTransport(config);
-
   return transporter;
 }
 
@@ -88,6 +118,11 @@ async function sendWithLogging({ to, subject, html, flow, token }) {
 
     return response;
   } catch (error) {
+    const likelyRenderSmtpRestriction = isLikelyRenderSmtpRestriction(error);
+    const suggestion = likelyRenderSmtpRestriction
+      ? 'Render free web services block outbound SMTP on ports 25/465/587. Upgrade Render plan to use SMTP.'
+      : null;
+
     console.error(`[Email][${flow}] SMTP send failed`, {
       to,
       from: FROM_EMAIL,
@@ -99,7 +134,18 @@ async function sendWithLogging({ to, subject, html, flow, token }) {
       code: error?.code || null,
       command: error?.command || null,
       response: error?.response || null,
+      suggestion,
     });
+
+    if (likelyRenderSmtpRestriction) {
+      const helpfulError = new Error(
+        'SMTP connection is blocked by the hosting environment. Upgrade Render plan to use SMTP.'
+      );
+      helpfulError.code = 'SMTP_BLOCKED';
+      helpfulError.cause = error;
+      throw helpfulError;
+    }
+
     throw error;
   }
 }

@@ -18,7 +18,7 @@
 ```
 Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
                                             →  Cloudinary (images)
-                                            →  Gmail SMTP via Nodemailer (transactional emails)
+                                            →  SMTP via Nodemailer (transactional emails)
 ```
 
 ---
@@ -38,7 +38,7 @@ Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
 
 ### How it works
 
-1. **Signup** → User created with `emailVerified: false` → SHA-256 hashed verification token stored → email sent via Gmail SMTP → user clicks link → `emailVerified: true`
+1. **Signup** → User created with `emailVerified: false` → SHA-256 hashed verification token stored → email sent via SMTP → user clicks link → `emailVerified: true`
 2. **Login** → Blocked if `emailVerified: false` (403) → JWT issued on success (7-day expiry)
 3. **Forgot password** → Accepts email or studentId → SHA-256 hashed token stored → reset email sent → 10-minute expiry
 4. **Reset password** → Token verified → password updated → `passwordChangedAt` set → old JWTs invalidated
@@ -96,13 +96,14 @@ JWT_SECRET=your_jwt_secret_here
 # Cloudinary
 CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
 
-# Email (Gmail SMTP)
+# Email (SMTP)
 EMAIL_USER=your-email@gmail.com
 EMAIL_PASS=your-16-char-app-password
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
 EMAIL_FROM_NAME=CUET ConnectX
+EMAIL_SEND_TIMEOUT_MS=12000
 
 # URLs
 FRONTEND_URL=http://localhost:5173
@@ -139,7 +140,8 @@ npm run seed-admin      # Create admin user
 5. Set `CORS_ORIGIN` to your Vercel frontend URL
 6. Set `FRONTEND_URL` to your Vercel frontend URL (used in email links)
 
-> **Note:** Email is sent via SMTP using `nodemailer`. For Gmail/Google Workspace, use an App Password (`EMAIL_PASS`) and keep `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_SECURE=false`.
+> **Important (Render Free Tier):** Render announced on **September 26, 2025** that free web services block outbound SMTP ports `25`, `465`, and `587`.  
+> If your service is on Render free plan, SMTP email will fail by network policy. Upgrade to a paid Render plan to use SMTP.
 
 ---
 

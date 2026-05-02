@@ -25,6 +25,8 @@ services:
         sync: false
       - key: EMAIL_PASS
         sync: false
+      - key: EMAIL_SEND_TIMEOUT_MS
+        value: "12000"
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT

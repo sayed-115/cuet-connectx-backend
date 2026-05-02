@@ -54,6 +54,9 @@
 - **Heroku**
 - **DigitalOcean App Platform**
 
+> Note: Render free web services block outbound SMTP ports (`25`, `465`, `587`) as of September 26, 2025.  
+> To use SMTP email delivery on Render, deploy the backend on a paid instance type.
+
 #### Frontend (React/Vite)
 - **Vercel** (Recommended for React)
 - **Netlify**

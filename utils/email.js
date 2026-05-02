@@ -92,18 +92,22 @@ function getTransporter() {
   return transporter;
 }
 
+async function sendWithSmtp({ to, subject, html }) {
+  return getTransporter().sendMail({
+    to,
+    from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
+    subject,
+    html,
+  });
+}
+
 async function sendWithLogging({ to, subject, html, flow, token }) {
   assertEmailConfig();
 
   try {
-    const response = await getTransporter().sendMail({
-      to,
-      from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
-      subject,
-      html,
-    });
+    const response = await sendWithSmtp({ to, subject, html });
 
-    console.log(`[Email][${flow}] SMTP accepted email`, {
+    console.log(`[Email][${flow}] Email accepted`, {
       to,
       from: FROM_EMAIL,
       smtpHost: SMTP_HOST,
@@ -120,10 +124,10 @@ async function sendWithLogging({ to, subject, html, flow, token }) {
   } catch (error) {
     const likelyRenderSmtpRestriction = isLikelyRenderSmtpRestriction(error);
     const suggestion = likelyRenderSmtpRestriction
-      ? 'Render free web services block outbound SMTP on ports 25/465/587. Upgrade Render plan to use SMTP.'
+      ? 'Render free web services block outbound SMTP on ports 25/465/587.'
       : null;
 
-    console.error(`[Email][${flow}] SMTP send failed`, {
+    console.error(`[Email][${flow}] Email send failed`, {
       to,
       from: FROM_EMAIL,
       smtpHost: SMTP_HOST,
@@ -139,7 +143,7 @@ async function sendWithLogging({ to, subject, html, flow, token }) {
 
     if (likelyRenderSmtpRestriction) {
       const helpfulError = new Error(
-        'SMTP connection is blocked by the hosting environment. Upgrade Render plan to use SMTP.'
+        'SMTP connection is blocked by the hosting environment. Consider a host that does not block SMTP (like Vercel or Koyeb) or upgrade your Render tier.'
       );
       helpfulError.code = 'SMTP_BLOCKED';
       helpfulError.cause = error;
@@ -149,6 +153,7 @@ async function sendWithLogging({ to, subject, html, flow, token }) {
     throw error;
   }
 }
+
 
 /**
  * Send email verification link to a newly registered user.

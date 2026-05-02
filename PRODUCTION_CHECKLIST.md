@@ -55,7 +55,8 @@
 - **DigitalOcean App Platform**
 
 > Note: Render free web services block outbound SMTP ports (`25`, `465`, `587`) as of September 26, 2025.  
-> To use SMTP email delivery on Render, deploy the backend on a paid instance type.
+> For free tier, note that outbound SMTP ports are blocked, so email sending will fail unless you upgrade or migrate to a different host.
+> Use a paid instance type if you want to enable SMTP functionality.
 
 #### Frontend (React/Vite)
 - **Vercel** (Recommended for React)

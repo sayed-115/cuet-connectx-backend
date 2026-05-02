@@ -18,7 +18,7 @@
 ```
 Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
                                             →  Cloudinary (images)
-                                            →  SMTP via Nodemailer (transactional emails)
+                                            →  SMTP (transactional emails)
 ```
 
 ---
@@ -67,7 +67,7 @@ Frontend (Vercel)  →  Backend API (Render)  →  MongoDB Atlas
 
 - Node.js 18+
 - MongoDB Atlas cluster (or local MongoDB)
-- Gmail or Google Workspace account with SMTP app password
+- Gmail/Workspace SMTP credentials
 - [Cloudinary](https://cloudinary.com/) account (image hosting)
 
 ### Installation
@@ -96,14 +96,16 @@ JWT_SECRET=your_jwt_secret_here
 # Cloudinary
 CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
 
-# Email (SMTP)
-EMAIL_USER=your-email@gmail.com
+# Email config
+EMAIL_USER=your-sender-email@example.com
+EMAIL_FROM_NAME=CUET ConnectX
+EMAIL_SEND_TIMEOUT_MS=12000
+
+# SMTP (Gmail example)
 EMAIL_PASS=your-16-char-app-password
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
-EMAIL_FROM_NAME=CUET ConnectX
-EMAIL_SEND_TIMEOUT_MS=12000
 
 # URLs
 FRONTEND_URL=http://localhost:5173
@@ -141,7 +143,7 @@ npm run seed-admin      # Create admin user
 6. Set `FRONTEND_URL` to your Vercel frontend URL (used in email links)
 
 > **Important (Render Free Tier):** Render announced on **September 26, 2025** that free web services block outbound SMTP ports `25`, `465`, and `587`.  
-> If your service is on Render free plan, SMTP email will fail by network policy. Upgrade to a paid Render plan to use SMTP.
+> If your service is on Render free plan, email sending will fail. You must upgrade to a paid tier or use a host that doesn't block SMTP (like Vercel or Koyeb).
 
 ---
 

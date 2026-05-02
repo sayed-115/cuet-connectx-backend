@@ -42,6 +42,7 @@ function getTransporter() {
     host: SMTP_HOST,
     port: SMTP_PORT,
     secure: SMTP_SECURE,
+    family: 4, // Force IPv4 to avoid ENETUNREACH errors on some hosting providers
     auth: {
       user: FROM_EMAIL,
       pass: EMAIL_PASS,

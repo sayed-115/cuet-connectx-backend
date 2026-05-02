@@ -39,20 +39,23 @@ function getTransporter() {
   if (transporter) return transporter;
 
   const config = {
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
     auth: {
       user: FROM_EMAIL,
       pass: EMAIL_PASS,
     },
+    // CRITICAL: This fixes the ENETUNREACH error.
+    // It forces the connection to use IPv4 instead of the failing IPv6.
+    family: 4,
+    // Optimal for cloud environments to prevent connection drops
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
   };
 
-  if (SMTP_HOST === 'smtp.gmail.com') {
-    config.service = 'gmail';
-  } else {
-    config.host = SMTP_HOST;
-    config.port = SMTP_PORT;
-    config.secure = SMTP_SECURE;
-    config.family = 4; // Force IPv4 to avoid ENETUNREACH errors on some hosting providers
-  }
+  // Log the configuration attempt (excluding password)
+  console.log(`[Email] Initializing SMTP with Host: ${SMTP_HOST}, Port: ${SMTP_PORT}, Secure: ${SMTP_SECURE}`);
 
   transporter = nodemailer.createTransport(config);
 

@@ -38,16 +38,23 @@ function assertEmailConfig() {
 function getTransporter() {
   if (transporter) return transporter;
 
-  transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_SECURE,
-    family: 4, // Force IPv4 to avoid ENETUNREACH errors on some hosting providers
+  const config = {
     auth: {
       user: FROM_EMAIL,
       pass: EMAIL_PASS,
     },
-  });
+  };
+
+  if (SMTP_HOST === 'smtp.gmail.com') {
+    config.service = 'gmail';
+  } else {
+    config.host = SMTP_HOST;
+    config.port = SMTP_PORT;
+    config.secure = SMTP_SECURE;
+    config.family = 4; // Force IPv4 to avoid ENETUNREACH errors on some hosting providers
+  }
+
+  transporter = nodemailer.createTransport(config);
 
   return transporter;
 }
